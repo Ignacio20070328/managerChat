@@ -1,0 +1,20 @@
+# Dependencias
+node_modules/
+
+# Sesiones y caché de WhatsApp Web (Privacidad y seguridad)
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Variables de entorno y contraseñas
+.env
+.env.local
+
+# Carpetas de compilación (React / Móvil)
+dist/
+build/
+.expo/
+
+# Archivos de sistema y editor
+.DS_Store
+Thumbs.db
+.vscode/
