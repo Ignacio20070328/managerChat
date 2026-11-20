@@ -17,7 +17,17 @@ const pool = mysql.createPool({
     database: process.env.DB_NAME,
     waitForConnections: true,
     connectionLimit: 10,
-    queueLimit: 0
+    queueLimit: 0,
+    // Las fechas se guardan y se leen en UTC. Sin esto, mysql2 interpreta las
+    // fechas de MySQL como hora local y llegan desfasadas (3 h en Chile).
+    // La app móvil las convierte a la hora del teléfono al mostrarlas.
+    timezone: 'Z'
+});
+
+// Asegura que NOW() y CURRENT_TIMESTAMP usen UTC en cada conexión,
+// sin depender de la zona horaria del servidor MySQL.
+pool.pool.on('connection', (conexion) => {
+    conexion.query("SET time_zone = '+00:00'");
 });
 
 module.exports = pool;

@@ -14,6 +14,8 @@ services:
       - "127.0.0.1:${DB_PORT:-3306}:3306"
     volumes:
       - db_data:/var/lib/mysql
+      # Crea las tablas la primera vez que se inicializa el volumen
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
 volumes:
   db_data:
