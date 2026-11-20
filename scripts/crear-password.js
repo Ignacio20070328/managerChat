@@ -77,7 +77,9 @@ function fallar(mensaje) {
     if (password !== confirmacion) fallar('Las contraseñas no coinciden. No se cambió nada.');
 
     let contenido = fs.readFileSync(RUTA_ENV, 'utf8');
-    contenido = fijarVariable(contenido, 'ADMIN_PASSWORD_HASH', hashearPassword(password));
+    // Entre comillas simples: el hash contiene "$" y Docker Compose (que también lee .env)
+    // lo interpretaría como variables. dotenv lee el valor igual, sin las comillas.
+    contenido = fijarVariable(contenido, 'ADMIN_PASSWORD_HASH', `'${hashearPassword(password)}'`);
     // Un secreto nuevo invalida todos los tokens emitidos antes
     contenido = fijarVariable(contenido, 'TOKEN_SECRET', crypto.randomBytes(32).toString('base64url'));
     fs.writeFileSync(RUTA_ENV, contenido, { mode: 0o600 });
