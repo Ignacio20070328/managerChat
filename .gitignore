@@ -21,3 +21,6 @@ Thumbs.db
 
 # Comprobantes de clientes (datos personales)
 public/uploads/
+
+# Respaldos de la base y de los comprobantes (contienen datos personales)
+respaldos/

@@ -35,7 +35,10 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | `bot/mensajes.js` | **Todos** los textos que reciben los clientes. |
 | `lib/auth.js` | Hash scrypt, tokens HMAC de 30 días, límite de intentos de login. |
 | `config/db.js` | Pool `mysql2/promise`. **Fechas en UTC** (`timezone: 'Z'` + `time_zone '+00:00'`). |
-| `db/schema.sql` | Esquema completo. Docker lo carga solo al crear el volumen por primera vez. |
+| `db/schema.sql` | Esquema completo (con reglas CHECK de cada etapa del pedido). Docker lo carga solo al crear el volumen. |
+| `db/init/02-permisos-app.sh` | Al crear la base, deja al usuario de la app con **solo `SELECT, INSERT, UPDATE, DELETE`**. |
+| `db/migraciones/` | Cambios para bases ya creadas. Se aplican **como root** y **después de `npm run respaldo`**. |
+| `scripts/respaldo.js`, `scripts/restaurar.js` | `npm run respaldo` (base + fotos en `respaldos/`, guarda los últimos 10) y `npm run restaurar -- <nombre>` (respalda el estado actual antes de reemplazar). |
 | `scripts/crear-password.js` | `npm run crear-password`: guarda el hash en `.env` y rota `TOKEN_SECRET`. |
 
 ### Base de datos (`gestor_mvp`) — montos en CLP enteros
@@ -108,8 +111,11 @@ npx expo start
 
 Después: en la app, **Productos** (cargar catálogo) y **Ajustes** (datos de transferencia).
 
-Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea el usuario. Con una base vacía:
-`docker compose down -v && docker compose up -d`. Con datos, aplicar `db/schema.sql` a mano y migrar las tablas viejas.
+Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea el usuario. Con una base sin datos
+importantes: `docker compose down -v && docker compose up -d` (**borra la base**). Con datos: `npm run respaldo` y aplicar
+los archivos de `db/migraciones/` que falten, como root:
+`docker exec -i mysql-gestor-mvp sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' < db/migraciones/<archivo>.sql`
+y los permisos: `docker exec -i mysql-gestor-mvp sh < db/init/02-permisos-app.sh`.
 
 ## Reglas del proyecto
 
@@ -118,6 +124,13 @@ Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea e
 
 - **Nunca commitear** `.env`, `.wwebjs_auth/`, `.wwebjs_cache/` ni `public/uploads/` (ya están en `.gitignore`).
   En el pasado se subió la sesión de WhatsApp al repo público y hubo que reescribir el historial.
+- **Respaldar antes de cualquier cambio en la base** (`npm run respaldo`). `respaldos/` tiene datos personales: está en
+  `.gitignore` y no se comparte.
+- El usuario de la app no puede cambiar la estructura (`ALTER`, `DROP`): migraciones y respaldos van como root.
+  Las reglas CHECK de `Pedidos` exigen: solo `PorPagar` sin comprobante (y nunca con), `Aprobado`/`Entregado` con
+  `fecha_aprobacion`, `Entregado` con `fecha_entrega`, `Rechazado` con motivo y fecha, `total` nulo o > 0.
+- En `.env`, `ADMIN_PASSWORD_HASH` va entre comillas simples: contiene `$` y Docker Compose (que también lee `.env`)
+  lo interpretaría como variables.
 - No escribir credenciales ni IPs en el código: van en `.env` (backend) o `gestor-movil/.env.local` (app).
 - **Nunca poner secretos en `EXPO_PUBLIC_*`**: Expo los copia en texto plano dentro de la app compilada.
 - En desarrollo, `gestor-movil/.env.local` **manda** sobre una variable `EXPO_PUBLIC_*` pasada por terminal en los

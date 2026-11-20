@@ -9,7 +9,9 @@
     "crear-password": "node scripts/crear-password.js",
     "api": "BOT_DESACTIVADO=1 node --watch index.js",
     "demo:cargar": "node scripts/demo.js cargar",
-    "demo:borrar": "node scripts/demo.js borrar"
+    "demo:borrar": "node scripts/demo.js borrar",
+    "respaldo": "node scripts/respaldo.js",
+    "restaurar": "node scripts/restaurar.js"
   },
   "keywords": [],
   "author": "",

@@ -1,12 +1,13 @@
 -- Esquema de la base de datos de TerryChat (gestor_mvp)
--- Docker lo ejecuta automáticamente la PRIMERA vez que se crea el volumen db_data.
--- Para aplicarlo a una base existente:
---   docker exec -i mysql-gestor-mvp sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < db/schema.sql
+-- Docker lo ejecuta automáticamente la PRIMERA vez que se crea el volumen db_data
+-- (y luego db/init/02-permisos-app.sh deja al usuario de la app con permisos mínimos).
+-- Una base ya creada NO se actualiza sola: aplica los archivos de db/migraciones/ (como root).
 --
 -- Montos en pesos chilenos (CLP), enteros sin decimales.
 -- Fechas en UTC (ver config/db.js).
 
 SET NAMES utf8mb4;
+ALTER DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS Clientes (
     id_cliente      INT UNSIGNED  NOT NULL AUTO_INCREMENT,
@@ -54,11 +55,21 @@ CREATE TABLE IF NOT EXISTS Pedidos (
     PRIMARY KEY (id_pedido),
     -- Las pantallas listan pedidos por estado y fecha
     KEY idx_pedidos_estado_fecha (estado, fecha),
+    -- Comprobantes por revisar, por orden de llegada
+    KEY idx_pedidos_estado_comprobante (estado, fecha_comprobante),
+    -- Ventas por día (desde la aprobación del pago)
+    KEY idx_pedidos_estado_aprobacion (estado, fecha_aprobacion),
     -- El bot busca el pedido abierto de un cliente
     KEY idx_pedidos_cliente_estado (id_cliente, estado),
     CONSTRAINT fk_pedidos_cliente FOREIGN KEY (id_cliente)
         REFERENCES Clientes (id_cliente)
-        ON UPDATE CASCADE ON DELETE RESTRICT
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    -- Reglas de cada etapa (también las controla el código; aquí protegen ante errores o ediciones a mano)
+    CONSTRAINT chk_pedidos_comprobante CHECK ((estado = 'PorPagar') = (ruta_comprobante IS NULL)),
+    CONSTRAINT chk_pedidos_total CHECK (total IS NULL OR total > 0),
+    CONSTRAINT chk_pedidos_aprobacion CHECK (estado NOT IN ('Aprobado', 'Entregado') OR fecha_aprobacion IS NOT NULL),
+    CONSTRAINT chk_pedidos_entrega CHECK (estado <> 'Entregado' OR fecha_entrega IS NOT NULL),
+    CONSTRAINT chk_pedidos_rechazo CHECK (estado <> 'Rechazado' OR (motivo_rechazo IS NOT NULL AND fecha_rechazo IS NOT NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Productos de cada pedido. El precio se copia al momento de pedir:
