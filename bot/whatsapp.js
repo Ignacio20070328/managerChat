@@ -1,12 +1,53 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const fs = require('fs');
-const path = require('path');
 const db = require('../config/db');
+const {
+    ComprobanteInvalidoError,
+    prepararCarpeta,
+    registrarComprobante
+} = require('./comprobantes');
+
+const MENSAJES = {
+    pedirPalabra: '📸 Para registrar tu pago, por favor envía la foto escribiendo la palabra "comprobante" en el mismo mensaje.',
+    recibido: '✅ Recibimos tu comprobante. Te avisaremos cuando el pago sea validado.',
+    formatoInvalido: '⚠️ No pudimos leer la imagen. Envía el comprobante como foto (JPG o PNG) de menos de 10 MB.',
+    errorInterno: '⚠️ Tuvimos un problema al registrar tu comprobante. Por favor, inténtalo de nuevo en unos minutos.'
+};
 
 const client = new Client({
     authStrategy: new LocalAuth(),
 });
+
+/**
+ * Solo se atienden chats individuales: se ignoran grupos, estados,
+ * canales y mensajes enviados por el propio bot.
+ */
+function esChatIndividual(msg) {
+    if (msg.fromMe) return false;
+    return msg.from.endsWith('@c.us') || msg.from.endsWith('@lid');
+}
+
+/**
+ * Devuelve el número de teléfono real (solo dígitos, con código de país).
+ * WhatsApp puede identificar al remitente con un "LID" interno en vez de su
+ * número; en ese caso se pide el número asociado.
+ */
+async function obtenerTelefono(msg) {
+    if (msg.from.endsWith('@c.us')) {
+        return msg.from.split('@')[0];
+    }
+    try {
+        const [resultado] = await client.getContactLidAndPhone([msg.from]);
+        if (resultado?.pn) {
+            return resultado.pn.split('@')[0];
+        }
+    } catch (error) {
+        console.warn('No se pudo convertir el LID a teléfono:', error.message);
+    }
+    // Último recurso: se guarda el identificador interno con un prefijo para
+    // poder distinguirlo de un teléfono real.
+    return `lid:${msg.from.split('@')[0]}`;
+}
 
 client.on('qr', (qr) => {
     qrcode.generate(qr, { small: true });
@@ -17,60 +58,43 @@ client.on('ready', () => {
     console.log('¡Bot de WhatsApp conectado y listo para recibir comprobantes!');
 });
 
-client.on('message', async msg => {
-  if (msg.hasMedia) {
-    
-    
-    if (msg.type !== 'image') return;
+client.on('auth_failure', (mensaje) => {
+    console.error('Falló la autenticación de WhatsApp. Borra la carpeta .wwebjs_auth y vuelve a escanear el QR.', mensaje);
+});
 
-  
-    const textoMensaje = msg.body.toLowerCase();
-    if (!textoMensaje.includes('comprobante')) {
-        msg.reply('📸 Para registrar tu pago, por favor envía la foto escribiendo la palabra "comprobante" en el mismo mensaje.');
-        return; 
+client.on('disconnected', (motivo) => {
+    console.error(`El bot de WhatsApp se desconectó (${motivo}). Reinicia el servidor para reconectarlo.`);
+});
+
+client.on('message', async (msg) => {
+    if (!msg.hasMedia || msg.type !== 'image' || !esChatIndividual(msg)) return;
+
+    if (!(msg.body || '').toLowerCase().includes('comprobante')) {
+        await msg.reply(MENSAJES.pedirPalabra).catch(() => {});
+        return;
     }
 
-    // --- SI PASA LOS FILTROS, SIGUE TU CÓDIGO NORMAL ---
-    const media = await msg.downloadMedia();
+    try {
+        const media = await msg.downloadMedia();
+        const telefono = await obtenerTelefono(msg);
+        const { idPedido } = await registrarComprobante(db, telefono, media);
 
-    if (media && media.mimetype.includes('image')) {
-      const telefonoCliente = msg.from.split('@')[0];
-            
-            const fileName = `comprobante_${telefonoCliente}_${Date.now()}.${media.mimetype.split('/')[1]}`;
-            const savePath = path.join(__dirname, '../public/uploads/', fileName);
-            
-            
-            const dir = path.join(__dirname, '../public/uploads/');
-            if (!fs.existsSync(dir)){
-                fs.mkdirSync(dir, { recursive: true });
-            }
-
-            // Guardar imagen en disco
-            fs.writeFileSync(savePath, media.data, 'base64');
-            console.log(`Comprobante guardado de: ${telefonoCliente}`);
-
-            // Insertar en la base de datos
-            try {
-                const [clientes] = await db.query('SELECT id_cliente FROM Clientes WHERE telefono = ?', [telefonoCliente]);
-                let idCliente;
-
-                if (clientes.length === 0) {
-                    const [nuevoCliente] = await db.query('INSERT INTO Clientes (telefono, nombre_completo) VALUES (?, ?)', [telefonoCliente, 'Cliente Nuevo']);
-                    idCliente = nuevoCliente.insertId;
-                } else {
-                    idCliente = clientes[0].id_cliente;
-                }
-
-                const rutaBD = `/uploads/${fileName}`;
-                await db.query('INSERT INTO Pedidos (id_cliente, ruta_comprobante, estado) VALUES (?, ?, ?)', [idCliente, rutaBD, 'Pendiente']);
-                
-                console.log('Registro guardado en MySQL con éxito.');
-
-            } catch (error) {
-                console.error('Error al guardar en la base de datos:', error);
-            }
+        console.log(`Comprobante registrado: pedido #${idPedido} del cliente ${telefono}`);
+        await msg.reply(MENSAJES.recibido);
+    } catch (error) {
+        if (error instanceof ComprobanteInvalidoError) {
+            console.warn('Comprobante rechazado:', error.message);
+            await msg.reply(MENSAJES.formatoInvalido).catch(() => {});
+        } else {
+            console.error('Error al registrar el comprobante:', error);
+            await msg.reply(MENSAJES.errorInterno).catch(() => {});
         }
     }
+});
+
+// Crea la carpeta de comprobantes una sola vez, al arrancar
+prepararCarpeta().catch((error) => {
+    console.error('No se pudo crear la carpeta de comprobantes:', error);
 });
 
 module.exports = client;
