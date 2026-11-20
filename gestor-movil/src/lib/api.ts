@@ -5,12 +5,26 @@ export const API_URL = (process.env.EXPO_PUBLIC_API_URL ?? '').replace(/\/+$/, '
 /** El servidor rechazó el token (vencido, inválido o contraseña cambiada). */
 export class SesionExpiradaError extends Error {}
 
+/** Error con el mensaje que envió el servidor (apto para mostrar). */
+export class ErrorDeApi extends Error {
+  constructor(public status: number, mensaje: string) {
+    super(mensaje);
+  }
+}
+
+const SIN_CONEXION = 'No se pudo conectar con el servidor. Revisa que esté encendido y que estés en la misma red.';
+
 export async function login(password: string): Promise<string> {
-  const respuesta = await fetch(`${API_URL}/api/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ password }),
-  });
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(`${API_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+  } catch {
+    throw new Error(SIN_CONEXION);
+  }
   const datos = await respuesta.json().catch(() => null);
   if (!respuesta.ok || !datos?.token) {
     throw new Error(datos?.error ?? 'No se pudo iniciar sesión');
@@ -18,14 +32,28 @@ export async function login(password: string): Promise<string> {
   return datos.token;
 }
 
-/** fetch a la API con el token de sesión. Lanza SesionExpiradaError si responde 401. */
-export async function apiFetch(ruta: string, token: string, opciones: RequestInit = {}): Promise<Response> {
-  const respuesta = await fetch(`${API_URL}${ruta}`, {
-    ...opciones,
-    headers: { ...(opciones.headers ?? {}), Authorization: `Bearer ${token}` },
-  });
+/**
+ * Llama a la API con el token y devuelve el JSON.
+ * Lanza SesionExpiradaError (401) o ErrorDeApi con el mensaje del servidor.
+ */
+export async function pedirApi<T>(ruta: string, token: string, opciones: { metodo?: string; cuerpo?: unknown } = {}): Promise<T> {
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(`${API_URL}/api${ruta}`, {
+      method: opciones.metodo ?? 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(opciones.cuerpo !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: opciones.cuerpo !== undefined ? JSON.stringify(opciones.cuerpo) : undefined,
+    });
+  } catch {
+    throw new ErrorDeApi(0, SIN_CONEXION);
+  }
   if (respuesta.status === 401) throw new SesionExpiradaError('Tu sesión expiró. Vuelve a ingresar.');
-  return respuesta;
+  const datos = await respuesta.json().catch(() => null);
+  if (!respuesta.ok) throw new ErrorDeApi(respuesta.status, datos?.error ?? `Error del servidor (${respuesta.status})`);
+  return datos as T;
 }
 
 /** Fuente de imagen protegida: la app envía el token al pedir la foto del comprobante. */

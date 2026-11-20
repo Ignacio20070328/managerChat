@@ -1,55 +1,75 @@
 # TerryChat — Contexto del proyecto
 
-MVP para un emprendimiento que vende productos (mermeladas) por WhatsApp. Los clientes envían
-la foto de su comprobante de pago al bot, el backend la guarda y el dueño revisa y aprueba los
-pagos desde una app móvil. Proyecto universitario (Universidad Católica de Temuco).
+MVP para un emprendimiento que vende productos (mermeladas) por WhatsApp. El cliente pide por WhatsApp,
+el bot calcula el total, el cliente transfiere y envía la foto del comprobante, y el dueño revisa, aprueba
+y entrega desde una app móvil. Proyecto universitario (Universidad Católica de Temuco).
 
 Idioma del proyecto: **español** (código, commits, mensajes al usuario y documentación).
 
 ## Arquitectura
 
 ```
-Cliente (WhatsApp) ──foto + "comprobante"──▶ bot/whatsapp.js ──▶ bot/comprobantes.js ──▶ MySQL + public/uploads/
-                                                                                              ▲
-App móvil (gestor-movil/, Expo) ◀──── API REST (app.js, Express, puerto 3000) ────────────────┘
+Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedidos, estado)
+                                      └▶ bot/comprobantes.js (foto + "comprobante")
+                                                │
+                                   servicios/ (lógica de negocio) ◀── rutas/ ◀── app.js ◀── API REST :3000
+                                                │                                              ▲
+                                       MySQL + public/uploads/                 App móvil (gestor-movil/)
 ```
 
-| Parte | Ubicación | Notas |
-|---|---|---|
-| API REST | `app.js` | Express 5. Carga `.env` con ruta absoluta. No arranca sin contraseña configurada. |
-| Autenticación | `lib/auth.js` | Hash scrypt de la contraseña, tokens HMAC de 30 días, límite de intentos de login. |
-| Script de contraseña | `scripts/crear-password.js` | `npm run crear-password`: guarda el hash en `.env` y rota `TOKEN_SECRET` (cierra todas las sesiones). |
-| Conexión BD | `config/db.js` | Pool `mysql2/promise`. Lee credenciales del `.env`; falla al arrancar si faltan. **Fechas en UTC** (`timezone: 'Z'` + `time_zone '+00:00'`). |
-| Bot WhatsApp | `bot/whatsapp.js` | `whatsapp-web.js` 1.34.8 (no oficial, usa Chromium). Filtra mensajes, obtiene teléfono real y responde al cliente. |
-| Registro de comprobantes | `bot/comprobantes.js` | Lógica separada de WhatsApp para poder probarla. Transacción: cliente + pedido + imagen, todo o nada. |
-| Esquema BD | `db/schema.sql` | Docker lo carga solo al crear el volumen por primera vez. |
-| App móvil | `gestor-movil/` | Expo SDK 58 + Expo Router. Tiene su propio `CLAUDE.md`/`AGENTS.md` (leerlo antes de tocar la app). |
+### Backend (raíz)
+| Ubicación | Rol |
+|---|---|
+| `index.js` | Punto de entrada: carga `.env`, valida auth, crea bot y app, escucha. `BOT_DESACTIVADO=1` omite WhatsApp. |
+| `app.js` | `crearApp({ db, auth, bot })`: construye Express **sin efectos** (testeable). Login público; todo `/api` y `/uploads` con sesión. |
+| `rutas/index.js` | Rutas HTTP autenticadas; delegan en `servicios/`. Express 5 envía los errores async al manejador. |
+| `servicios/` | Lógica de negocio y SQL: `pedidos.js` (ciclo de vida, transacciones), `productos.js`, `configuracion.js`, `resumen.js`. Lanzan `ErrorApi` (`lib/errores.js`) con código y mensaje apto para el usuario. |
+| `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` 1.34.8 (no oficial), estado de conexión y `notificar(telefono, texto)`. |
+| `bot/conversacion.js` | `procesarTexto(db, telefono, texto)` → respuesta o `null`. No depende de WhatsApp. |
+| `bot/comprobantes.js` | Valida la imagen y la registra con el pedido en una transacción (archivo + fila, todo o nada). |
+| `bot/mensajes.js` | **Todos** los textos que reciben los clientes. |
+| `lib/auth.js` | Hash scrypt, tokens HMAC de 30 días, límite de intentos de login. |
+| `config/db.js` | Pool `mysql2/promise`. **Fechas en UTC** (`timezone: 'Z'` + `time_zone '+00:00'`). |
+| `db/schema.sql` | Esquema completo. Docker lo carga solo al crear el volumen por primera vez. |
+| `scripts/crear-password.js` | `npm run crear-password`: guarda el hash en `.env` y rota `TOKEN_SECRET`. |
 
-### Base de datos (`gestor_mvp`)
-- **Clientes**: `id_cliente`, `telefono` (UNIQUE), `nombre_completo`, `fecha_registro`.
-- **Pedidos**: `id_pedido`, `id_cliente` (FK), `ruta_comprobante`, `estado`
-  (ENUM `Pendiente|Aprobado|Rechazado|Entregado`), `fecha`, `fecha_aprobacion`. Índice `(estado, fecha)`.
+### Base de datos (`gestor_mvp`) — montos en CLP enteros
+- **Clientes**: `telefono` UNIQUE (`lid:<id>` si WhatsApp oculta el número).
+- **Productos**: `nombre` UNIQUE, `precio`, `activo` (no se borran; se desactivan).
+- **Pedidos**: `total` (NULL si llegó un comprobante sin pedido previo), `estado`, `motivo_rechazo` y una fecha por
+  etapa. Ciclo: `PorPagar` (pidió por el bot) → `Pendiente` (llegó comprobante) → `Aprobado` | `Rechazado`
+  → `Entregado`. Máximo un `PorPagar` por cliente (un pedido nuevo lo reemplaza).
+- **DetallePedido**: copia `precio_unitario` al pedir (cambiar el catálogo no altera pedidos antiguos).
+- **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`).
 
-### API
-Todo exige `Authorization: Bearer <token>` (401 si falta o es inválido), salvo el login.
-
+### API (todo con `Authorization: Bearer <token>` salvo el login)
 | Método | Ruta | Descripción |
 |---|---|---|
-| POST | `/api/login` | `{ password }` → `{ token }`. 401 incorrecta; 429 tras 5 fallos por IP en 15 min. Pública. |
-| GET | `/api/pedidos/pendientes` | Pedidos Pendientes (más antiguos primero) con teléfono del cliente. |
-| PUT | `/api/pedidos/:id/aprobar` | Aprueba solo si está Pendiente. 200 / 400 ID inválido / 404 / 409 ya no pendiente. |
-| GET | `/uploads/<archivo>` | Imágenes de comprobantes (estático, también con token). |
+| POST | `/api/login` | `{ password }` → `{ token }`. 429 tras 5 fallos por IP en 15 min. Pública. |
+| GET | `/api/pedidos?estado=` | Lista por estado con `items`. Lo que espera acción, más antiguo primero; historial (máx. 100), más reciente primero. |
+| GET | `/api/pedidos/:id` | Un pedido con `items`. |
+| PUT | `/api/pedidos/:id/aprobar` · `/rechazar` `{ motivo }` · `/entregar` | Transiciones atómicas (409 si el estado no corresponde). Aprobar y rechazar avisan al cliente y devuelven `notificado`. |
+| GET/POST/PUT | `/api/productos`, `/api/productos/:id` | Catálogo (activos primero, luego por nombre: ese orden numera el menú del bot). |
+| GET/PUT | `/api/configuracion` | Nombre del negocio y datos de transferencia. |
+| GET | `/api/resumen` | Conteo por estado, ventas de 7 días por día local (`ZONA_HORARIA`, por defecto America/Santiago), productos más vendidos (30 días) y estado del bot. |
+| GET | `/uploads/<archivo>` | Foto del comprobante (con token). |
 
-CORS desactivado salvo para los orígenes de `CORS_ORIGINS` (la app nativa no lo necesita).
-La app guarda el token con `expo-secure-store` (web: `localStorage`) — ver `gestor-movil/src/lib/`.
+### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
+- **No responde conversaciones normales** (el número puede ser personal). Solo reacciona a:
+  `menu`/`catalogo`/`productos`/`precios`/`pedir`/`comprar` → catálogo numerado; `1x2, 2x1` → crea el pedido
+  y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante".
+- El comprobante se asocia al pedido `PorPagar` del cliente; si no hay, crea un pedido sin total.
+- Convierte los **LID** de WhatsApp a teléfono con `client.getContactLidAndPhone()`.
+- Imágenes JPEG/PNG/WebP ≤ 10 MB con nombre aleatorio (nunca el teléfono).
 
-### Comportamiento del bot
-- Solo chats individuales (`@c.us` / `@lid`); ignora grupos, estados y mensajes propios.
-- Exige la palabra "comprobante" en el texto de la foto; si falta, la pide.
-- WhatsApp a veces identifica al remitente con un **LID** (id interno, no es un teléfono):
-  se convierte con `client.getContactLidAndPhone()`; si no se puede se guarda `lid:<id>`.
-- Acepta JPEG/PNG/WebP ≤ 10 MB. Nombre de archivo aleatorio (UUID), **nunca el teléfono**.
-- Responde ✅ al registrar, ⚠️ si el formato es inválido o hay un error interno.
+### App móvil (`gestor-movil/`, Expo SDK 58 + Expo Router) — leer su `AGENTS.md` antes de tocarla
+- `src/app/_layout.tsx`: `ProveedorSesion` + `Stack.Protected` (sin sesión solo `login`; con sesión solo `(app)`).
+- `src/app/(app)/_layout.tsx`: menú lateral (`expo-router/drawer`, incluido en expo-router desde SDK 56)
+  con Inicio, Comprobantes, Ventas / Entregas, Estadísticas, Productos y Ajustes.
+- `src/lib/`: `api.ts` (fetch con token, `ErrorDeApi`, `SesionExpiradaError`), `contexto-sesion.tsx` (`useSesion().api`
+  cierra la sesión ante un 401), `sesion.ts` (token en `expo-secure-store`; web: `localStorage`), `formato.ts`, `tipos.ts`.
+- `src/hooks/use-datos.ts`: carga datos y los recarga al volver a la pantalla (`useFocusEffect`).
+- `src/components/ui.tsx`: colores y componentes base (`Pantalla` con deslizar para recargar, `Tarjeta`, `Boton`, `EstadoCarga`).
 
 ## Puesta en marcha
 
@@ -58,16 +78,18 @@ cp .env.example .env            # completar contraseñas de la BD (comando para 
 npm install                     # backend, en la RAÍZ
 npm run crear-password          # contraseña de acceso a la app (se guarda solo su hash)
 docker compose up -d            # MySQL 8 solo en 127.0.0.1:3306, crea tablas y usuario gestor_app
-npm start                       # o: npm run dev (reinicia al guardar). Pide escanear QR de WhatsApp.
+npm start                       # API + bot (pide escanear el QR). npm run dev: reinicia al guardar.
+npm run api                     # solo la API, SIN WhatsApp (para trabajar en la app)
 
 cd gestor-movil && npm install  # app: dependencias SOLO aquí, nunca en la raíz
 cp .env.example .env.local      # poner la IP del computador en EXPO_PUBLIC_API_URL
 npx expo start
 ```
 
-Si el volumen `db_data` ya existía de antes, MySQL **no** ejecuta `schema.sql` ni crea el usuario.
-Aplicar el esquema a mano (no borra datos):
-`docker exec -i mysql-gestor-mvp sh -c 'mysql -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE"' < db/schema.sql`
+Después: en la app, **Productos** (cargar catálogo) y **Ajustes** (datos de transferencia).
+
+Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea el usuario. Con una base vacía:
+`docker compose down -v && docker compose up -d`. Con datos, aplicar `db/schema.sql` a mano y migrar las tablas viejas.
 
 ## Reglas del proyecto
 
@@ -75,50 +97,45 @@ Aplicar el esquema a mano (no borra datos):
   En el pasado se subió la sesión de WhatsApp al repo público y hubo que reescribir el historial.
 - No escribir credenciales ni IPs en el código: van en `.env` (backend) o `gestor-movil/.env.local` (app).
 - **Nunca poner secretos en `EXPO_PUBLIC_*`**: Expo los copia en texto plano dentro de la app compilada.
-  Por eso la app usa login con contraseña y no una clave fija.
-- Rutas nuevas de la API: definirlas después de `app.use('/api', conSesion)` para que exijan sesión.
-- No instalar dependencias de Expo/React Native en la raíz: van en `gestor-movil/`.
-- Errores de la API: registrar el detalle con `console.error` y responder un mensaje genérico (no `error.message`).
-- Cambios de estado de pedidos: condicionar el `UPDATE` al estado actual (evita carreras y dobles aprobaciones).
-- Para probar el backend sin abrir WhatsApp: precargar un stub de `bot/whatsapp.js` en `require.cache`
-  y usar `bot/comprobantes.js` directamente. No existen tests automatizados en el repo todavía.
-- App móvil: correr `npx tsc --noEmit` y `npx expo lint` dentro de `gestor-movil/` antes de dar algo por terminado.
-  Hay 3 errores de TypeScript previos en archivos de la plantilla de Expo (no relacionados).
+- En desarrollo, `gestor-movil/.env.local` **manda** sobre una variable `EXPO_PUBLIC_*` pasada por terminal en los
+  bundles de cada pantalla. Para apuntar a otro servidor: editar `.env.local` o usar `EXPO_NO_DOTENV=1`.
+- Lógica de negocio en `servicios/`, nunca en rutas ni en el bot. Textos al cliente en `bot/mensajes.js`.
+- Rutas nuevas: en `rutas/index.js` (quedan bajo sesión automáticamente).
+- Errores: lanzar `ErrorApi` (validacion/noEncontrado/conflicto) con un mensaje para el usuario; cualquier otro
+  error se registra y responde "Error interno" (nunca exponer `error.message`).
+- Cambios de estado de pedidos: condicionar el `UPDATE` al estado actual (`servicios/pedidos.cambiarEstado`).
+- Pruebas: `crearApp()` acepta un `bot` falso (`{ estado, notificar }`) y escucha en un puerto libre; el bot se
+  prueba con `crearBot(db).client.listeners('message')[0]` sin llamar a `iniciar()`. No hay suite en el repo todavía.
+- App: correr `npx tsc --noEmit` y `npx expo lint` dentro de `gestor-movil/` (hoy: 0 errores, 0 avisos).
 
 ## Estado y hoja de ruta
 
-Hecho (auditoría inicial → pasos):
+Hecho:
 1. ✅ Credenciales a `.env`, usuario MySQL propio, MySQL solo local, Expo fuera de la raíz.
-2. ✅ `db/schema.sql`, endpoint `PUT /aprobar`, corrección de fechas (desfase de 3 h por zona horaria).
-3. ✅ Bot: teléfono real (LID), transacción sin huérfanos, sin clientes duplicados, respuestas al cliente,
-   filtro de grupos, validación de imagen, nombres aleatorios, rutas absolutas.
-4. ✅ Autenticación: login con contraseña (hash en `.env`), tokens de 30 días, `/uploads` protegido,
-   límite de intentos, CORS restringido, errores genéricos, pantalla de login y cierre de sesión en la app,
-   URL del servidor en `EXPO_PUBLIC_API_URL`.
+2. ✅ Esquema de BD, aprobar pagos, corrección de fechas (UTC).
+3. ✅ Bot robusto: teléfono real (LID), transacciones, sin duplicados, validación de imagen.
+4. ✅ Autenticación: login con contraseña, tokens, `/uploads` protegido, límite de intentos, CORS restringido.
+5. ✅ Reestructuración: catálogo y ciclo completo del pedido, pedidos por WhatsApp con total, avisos al cliente,
+   backend en módulos, app con menú lateral y una pantalla por sección, plantilla de Expo eliminada.
 
 Pendiente:
-- Sin HTTPS: en la wifi local la contraseña y el token viajan sin cifrar. Para producción, HTTPS
-  (proxy inverso o túnel). Android además bloquea HTTP en builds de release.
-- El límite de intentos vive en memoria (se reinicia con el servidor) y es por IP.
-5. **App móvil** — separar secciones en rutas de Expo Router (hoy todo vive en
-   `src/app/index.tsx` con `useState`); quitar restos de plantilla (`explore.tsx`, logos de Expo/React);
-   pull-to-refresh y estados de carga/error; `expo-image`; comprimir imágenes; `Alert.alert`;
-   `GET /api/pedidos/aprobados` para "Ventas / Entregas"; estado real del bot en vez de texto fijo.
-- Seguridad del repo (lo hace el dueño del repo): cerrar la sesión vinculada de WhatsApp, repo privado,
-  pedir a GitHub Support borrar los commits cacheados `ce928bd` y `6b50a41`, proteger `main`.
-- 16 vulnerabilidades de `npm audit`, todas vía `whatsapp-web.js` → puppeteer. No aplicar
-  `npm audit fix --force` (baja whatsapp-web.js de versión); esperar una versión nueva.
-- Si se cae la sesión de WhatsApp, el bot no se reconecta solo (solo lo informa en consola).
+- Sin HTTPS: en la wifi local la contraseña y el token viajan sin cifrar. Android bloquea HTTP en builds de release.
+- El límite de intentos vive en memoria y es por IP. Hay una sola contraseña compartida (sin usuarios).
+- Fotos de comprobantes en la **versión web** de la app: `Image` de react-native-web no envía cabeceras, así que
+  no se verificó que carguen con el token en web (en Android/iOS sí se envían).
+- La app no se probó en un teléfono real tras la reestructuración (solo TypeScript, lint y compilación de Android).
+- Seguridad del repo (lo hace el dueño): cerrar la sesión vinculada de WhatsApp, repo privado, pedir a GitHub
+  Support borrar los commits cacheados `ce928bd` y `6b50a41`, proteger `main`.
+- 16 vulnerabilidades de `npm audit`, todas vía `whatsapp-web.js` → puppeteer. No usar `npm audit fix --force`.
+- Si se cae la sesión de WhatsApp, el bot no se reconecta solo (la app lo muestra en Inicio y Ajustes).
 
-### Plan de IA (propuesto, aún no implementado)
-Usar la API de Claude (`@anthropic-ai/sdk`, modelo `claude-opus-5-5`, API key en `.env`). Requiere el paso 4 antes.
-1. **Revisión previa de comprobantes** (primero): leer la imagen y extraer monto, fecha, banco, N° de operación
-   y cuenta de destino; alertas por operación repetida, cuenta equivocada, fecha antigua, monto distinto o
-   imagen que no es comprobante. Guardar los campos en `Pedidos`; analizar en segundo plano.
+### Plan de IA
+Proveedor **externo, NO Claude**: **NVIDIA principal y Gemini de respaldo** (modelos por definir; deben leer imágenes).
+Solo desde el backend, claves en `.env` (nunca en `EXPO_PUBLIC_*`).
+1. **Revisión previa de comprobantes**: extraer monto, fecha, banco, N° de operación y cuenta de destino; alertas
+   (operación repetida, cuenta equivocada, fecha antigua, monto distinto del pedido, no es comprobante).
    **La IA solo sugiere: la aprobación siempre la hace una persona** (fotos editadas, texto inyectado en la imagen).
-   Falta definir la cuenta bancaria de destino del negocio.
-2. **Asistente para clientes en WhatsApp**: responde el estado de sus pedidos. Solo puede consultar pedidos del
-   número que escribe (tomado de WhatsApp por código, nunca del texto). Más respuestas automáticas = más
-   riesgo de bloqueo del número → usar un número dedicado.
-3. **Asistente para el dueño en la app** (ventas, pendientes, estadísticas) — más adelante.
+2. **Asistente para clientes en WhatsApp** (y entender pedidos en texto libre, p. ej. "2 de frambuesa"). Solo puede
+   consultar pedidos del número que escribe (tomado de WhatsApp, nunca del texto). Usar un número dedicado.
+3. **Asistente para el dueño en la app** — más adelante.
 - Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo.
