@@ -18,9 +18,7 @@ export function PantallaLogin({ alIngresar, aviso }: { alIngresar: (token: strin
       setPassword('');
       alIngresar(token);
     } catch (e) {
-      setError(e instanceof Error && e.message !== 'Network request failed'
-        ? e.message
-        : 'No se pudo conectar con el servidor');
+      setError(e instanceof Error ? e.message : 'No se pudo iniciar sesión');
     } finally {
       setCargando(false);
     }
