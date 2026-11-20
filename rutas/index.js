@@ -64,11 +64,11 @@ function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
 
     // --- Configuración del negocio ---
     r.get('/configuracion', async (req, res) => {
-        res.json(await configuracion.obtener(db));
+        res.json({ ...(await configuracion.obtener(db)), colores_disponibles: configuracion.COLORES_MARCA });
     });
 
     r.put('/configuracion', async (req, res) => {
-        res.json(await configuracion.actualizar(db, req.body));
+        res.json({ ...(await configuracion.actualizar(db, req.body)), colores_disponibles: configuracion.COLORES_MARCA });
     });
 
     // --- Inicio / Estadísticas ---

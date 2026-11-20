@@ -1,8 +1,11 @@
 # TerryChat — Contexto del proyecto
 
-MVP para un emprendimiento que vende productos (mermeladas) por WhatsApp. El cliente pide por WhatsApp,
-el bot calcula el total, el cliente transfiere y envía la foto del comprobante, y el dueño revisa, aprueba
-y entrega desde una app móvil. Proyecto universitario (Universidad Católica de Temuco).
+Gestor de pedidos por WhatsApp para **emprendedores de cualquier rubro** (comida, ropa, artesanía…). El cliente
+pide por WhatsApp, el bot calcula el total, el cliente transfiere y envía la foto del comprobante, y el dueño
+revisa, aprueba y entrega desde una app móvil. Proyecto universitario (Universidad Católica de Temuco).
+
+**La app es genérica: no asumir un rubro** en textos, íconos ni ejemplos (los datos de ejemplo de `npm run demo:cargar`
+son de mermeladas solo como caso de prueba). Cada negocio configura su nombre, color, productos y datos de pago.
 
 Idioma del proyecto: **español** (código, commits, mensajes al usuario y documentación).
 
@@ -42,7 +45,9 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
   etapa. Ciclo: `PorPagar` (pidió por el bot) → `Pendiente` (llegó comprobante) → `Aprobado` | `Rechazado`
   → `Entregado`. Máximo un `PorPagar` por cliente (un pedido nuevo lo reemplaza).
 - **DetallePedido**: copia `precio_unitario` al pedir (cambiar el catálogo no altera pedidos antiguos).
-- **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`).
+- **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`, `color_marca`). `color_marca` solo acepta
+  los de `COLORES_MARCA` (servicios/configuracion.js), todos con contraste ≥ 5:1 con texto blanco; la API los entrega
+  en `colores_disponibles`.
 - **AnalisisComprobante**: 1:1 con el pedido (reanalizar la reemplaza): `estado` (procesando/completado/fallido),
   `proveedor`, datos leídos (monto, bancos, cuenta, titular, N° de operación, fecha), `alertas` JSON y `sugerencia`.
 
@@ -55,8 +60,8 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | PUT | `/api/pedidos/:id/aprobar` · `/rechazar` `{ motivo }` · `/entregar` | Transiciones atómicas (409 si el estado no corresponde). Aprobar y rechazar avisan al cliente y devuelven `notificado`. |
 | POST | `/api/pedidos/:id/analizar` | Reanaliza el comprobante con IA y espera el resultado. 409 si la IA está desactivada o no hay comprobante. Cada pedido de las listas trae `analisis`. |
 | GET/POST/PUT | `/api/productos`, `/api/productos/:id` | Catálogo (activos primero, luego por nombre: ese orden numera el menú del bot). |
-| GET/PUT | `/api/configuracion` | Nombre del negocio y datos de transferencia. |
-| GET | `/api/resumen` | Conteo por estado, ventas de 7 días por día local (`ZONA_HORARIA`, por defecto America/Santiago), productos más vendidos (30 días), estado del bot e `ia: { activa, proveedores }`. |
+| GET/PUT | `/api/configuracion` | Nombre del negocio, datos de transferencia y color de marca (+ `colores_disponibles`). |
+| GET | `/api/resumen` | Conteo por estado, pendientes por sugerencia de la IA, productos activos, ventas de 7 días por día local (`ZONA_HORARIA`, por defecto America/Santiago), productos más vendidos (30 días), estado del bot e `ia: { activa, proveedores }`. |
 | GET | `/uploads/<archivo>` | Foto del comprobante (con token). |
 
 ### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
@@ -68,13 +73,21 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 - Imágenes JPEG/PNG/WebP ≤ 10 MB con nombre aleatorio (nunca el teléfono).
 
 ### App móvil (`gestor-movil/`, Expo SDK 58 + Expo Router) — leer su `AGENTS.md` antes de tocarla
-- `src/app/_layout.tsx`: `ProveedorSesion` + `Stack.Protected` (sin sesión solo `login`; con sesión solo `(app)`).
-- `src/app/(app)/_layout.tsx`: menú lateral (`expo-router/drawer`, incluido en expo-router desde SDK 56)
-  con Inicio, Comprobantes, Ventas / Entregas, Estadísticas, Productos y Ajustes.
-- `src/lib/`: `api.ts` (fetch con token, `ErrorDeApi`, `SesionExpiradaError`), `contexto-sesion.tsx` (`useSesion().api`
-  cierra la sesión ante un 401), `sesion.ts` (token en `expo-secure-store`; web: `localStorage`), `formato.ts`, `tipos.ts`.
-- `src/hooks/use-datos.ts`: carga datos y los recarga al volver a la pantalla (`useFocusEffect`).
-- `src/components/ui.tsx`: colores y componentes base (`Pantalla` con deslizar para recargar, `Tarjeta`, `Boton`, `EstadoCarga`).
+- `src/app/_layout.tsx`: carga fuentes + `ProveedorSesion` + `Stack.Protected` (sin sesión solo `login`; con sesión `(app)`).
+- `src/app/(app)/_layout.tsx`: `ProveedorNegocio` + menú lateral (`expo-router/drawer`, incluido en expo-router desde
+  SDK 56) con cabecera del color del negocio, globos con contadores (se actualizan al abrirlo) y estado del bot.
+  Pantallas: `index` (Inicio), `comprobantes/` (Stack: `index` lista + `[id]` detalle), `ventas`, `estadisticas`,
+  `productos`, `ajustes`. Cada pantalla dibuja su `<Encabezado>` (el del drawer está oculto).
+- Diseño: fondo crema `#fbf7f4`, **color de marca elegido por el negocio** (`useNegocio().acento` / `acentoSuave`),
+  verde solo para aprobar, rojo/ámbar solo para alertas. Fuentes Plus Jakarta Sans (títulos, cifras) e Inter (texto)
+  vía `<T variante=…>`; con fuentes propias no usar `fontWeight`, usar la familia (`FUENTES`). Importar cada grosor
+  por separado (`@expo-google-fonts/inter/400Regular`): el paquete completo suma ~7 MB.
+- `src/components/ui.tsx`: `COLORES`, `FUENTES`, `T`, `Encabezado`, `Pantalla`, `Tarjeta`, `Boton` (primario/exito/
+  peligro/secundario), `Insignia`, `EstadoCarga`. `src/lib/sugerencias.ts`: textos y colores de las sugerencias de la
+  IA y la tabla «Pedido vs. Comprobante». `src/hooks/use-acciones-pedido.ts`: aprobar/rechazar con confirmación.
+- `src/lib/`: `api.ts`, `contexto-sesion.tsx` (`useSesion().api` cierra la sesión ante un 401), `contexto-negocio.tsx`,
+  `sesion.ts` (token en `expo-secure-store`; web: `localStorage`), `formato.ts`, `tipos.ts`.
+- `src/hooks/use-datos.ts`: carga datos, los recarga al volver a la pantalla; `recargar` (con indicador) y `actualizar` (silencioso).
 
 ## Puesta en marcha
 
@@ -111,6 +124,8 @@ Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea e
 - Errores: lanzar `ErrorApi` (validacion/noEncontrado/conflicto) con un mensaje para el usuario; cualquier otro
   error se registra y responde "Error interno" (nunca exponer `error.message`).
 - Cambios de estado de pedidos: condicionar el `UPDATE` al estado actual (`servicios/pedidos.cambiarEstado`).
+- **Las pruebas actuales borran tablas completas**: no correrlas contra una base con datos que importen. Pendiente:
+  una base de datos separada para pruebas.
 - Pruebas: `crearApp()` acepta un `bot` falso (`{ estado, notificar }`) y escucha en un puerto libre; el bot se
   prueba con `crearBot(db).client.listeners('message')[0]` sin llamar a `iniciar()`. No hay suite en el repo todavía.
 - App: correr `npx tsc --noEmit` y `npx expo lint` dentro de `gestor-movil/` (hoy: 0 errores, 0 avisos).
@@ -124,6 +139,8 @@ Hecho:
 4. ✅ Autenticación: login con contraseña, tokens, `/uploads` protegido, límite de intentos, CORS restringido.
 5. ✅ Reestructuración: catálogo y ciclo completo del pedido, pedidos por WhatsApp con total, avisos al cliente,
    backend en módulos, app con menú lateral y una pantalla por sección, plantilla de Expo eliminada.
+6. ✅ Estructura de IA (proveedores reales pendientes) y datos de ejemplo.
+7. ✅ Rediseño de la app según la propuesta visual aprobada; genérica para cualquier rubro, color de marca configurable.
 
 Pendiente:
 - Sin HTTPS: en la wifi local la contraseña y el token viajan sin cifrar. Android bloquea HTTP en builds de release.

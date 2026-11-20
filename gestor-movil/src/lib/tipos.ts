@@ -59,15 +59,24 @@ export interface Producto {
   activo: boolean;
 }
 
+export interface ColorMarca {
+  nombre: string;
+  valor: string;
+}
+
 export interface Configuracion {
   nombre_negocio: string;
   datos_transferencia: string;
+  color_marca: string;
+  colores_disponibles: ColorMarca[];
 }
 
 export type EstadoBot = 'iniciando' | 'esperando_qr' | 'conectado' | 'desconectado' | 'error_autenticacion' | 'desactivado';
 
 export interface Resumen {
   porEstado: Record<EstadoPedido, number>;
+  pendientesPorSugerencia: { rechazar: number; revisar: number; aprobar: number; sin_analisis: number };
+  productosActivos: number;
   ventasPorDia: { dia: string; pedidos: number; monto: number }[];
   ventasSemana: { pedidos: number; monto: number };
   productosUltimos30Dias: { nombre: string; unidades: number; monto: number }[];

@@ -1,10 +1,24 @@
 const { validacion } = require('../lib/errores');
 
-// Claves permitidas, con su largo máximo y valor por defecto
+// Colores de marca que puede elegir cada negocio. Todos tienen contraste >= 5:1
+// con texto blanco (WCAG pide 4,5:1), por eso no se acepta cualquier color.
+const COLORES_MARCA = [
+    { nombre: 'Frambuesa', valor: '#a3133f' },
+    { nombre: 'Rosado', valor: '#be185d' },
+    { nombre: 'Naranja', valor: '#b4470f' },
+    { nombre: 'Verde azulado', valor: '#1f6f5c' },
+    { nombre: 'Azul', valor: '#1d4ed8' },
+    { nombre: 'Morado', valor: '#6b2c91' },
+    { nombre: 'Grafito', valor: '#374151' }
+];
+
+// Claves permitidas, con su largo máximo, valor por defecto y valores aceptados
 const CLAVES = {
     nombre_negocio: { maximo: 80, defecto: 'Mi emprendimiento' },
     // Se envía al cliente junto con el total de su pedido
-    datos_transferencia: { maximo: 1000, defecto: '' }
+    datos_transferencia: { maximo: 1000, defecto: '' },
+    // Color principal de la app (cabeceras, botones destacados)
+    color_marca: { maximo: 7, defecto: COLORES_MARCA[0].valor, opciones: COLORES_MARCA.map((c) => c.valor) }
 };
 
 async function obtener(db) {
@@ -23,7 +37,10 @@ async function actualizar(db, datos) {
         if (typeof valor !== 'string') throw validacion(`"${clave}" debe ser texto`);
         const limpio = valor.trim();
         if (limpio.length > regla.maximo) throw validacion(`"${clave}" no puede superar ${regla.maximo} caracteres`);
-        cambios.push([clave, limpio]);
+        if (regla.opciones && !regla.opciones.includes(limpio.toLowerCase())) {
+            throw validacion(`"${clave}" debe ser uno de los colores disponibles`);
+        }
+        cambios.push([clave, regla.opciones ? limpio.toLowerCase() : limpio]);
     }
     if (cambios.length === 0) throw validacion('No hay cambios que guardar');
 
@@ -34,4 +51,4 @@ async function actualizar(db, datos) {
     return obtener(db);
 }
 
-module.exports = { actualizar, obtener };
+module.exports = { COLORES_MARCA, actualizar, obtener };

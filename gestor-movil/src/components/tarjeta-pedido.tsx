@@ -1,76 +1,59 @@
 import type { ReactNode } from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-import { COLORES, Insignia, Tarjeta, estilos } from '@/components/ui';
-import { imagenProtegida } from '@/lib/api';
-import { useSesion } from '@/lib/contexto-sesion';
-import { fechaHora, hace, pesos, telefonoLegible } from '@/lib/formato';
+import { COLORES, T, Tarjeta } from '@/components/ui';
+import { fechaHora, hace, pesos, telefonoBonito } from '@/lib/formato';
 import type { Pedido } from '@/lib/tipos';
 
-/** Tarjeta de un pedido: cliente, productos, total, comprobante y acciones. */
-export function TarjetaPedido({ pedido, mostrarComprobante = false, fechaDestacada, analisis, acciones }: {
+/** Tarjeta de un pedido (Ventas): cliente, productos, total, fecha de la etapa y acciones. */
+export function TarjetaPedido({ pedido, fechaDestacada, acciones }: {
   pedido: Pedido;
-  mostrarComprobante?: boolean;
   fechaDestacada: { etiqueta: string; valor: string | null };
-  /** Panel de revisión con IA (se muestra antes de la foto). */
-  analisis?: ReactNode;
   acciones?: ReactNode;
 }) {
-  const { token } = useSesion();
-
   return (
     <Tarjeta estilo={{ gap: 10 }}>
       <View style={s.fila}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.cliente}>{telefonoLegible(pedido.telefono)}</Text>
-          <Text style={estilos.subtitulo}>
+        <View style={{ flex: 1, gap: 2 }}>
+          <T variante="fuerte" lineas={1}>{telefonoBonito(pedido.telefono)}</T>
+          <T variante="suave" estilo={{ fontSize: 12 }}>
             Pedido #{pedido.id_pedido} · {fechaDestacada.etiqueta} {hace(fechaDestacada.valor)}
-          </Text>
+          </T>
         </View>
-        <Text style={s.total}>{pesos(pedido.total)}</Text>
+        <T variante="cifra" estilo={{ fontSize: 18 }}>{pesos(pedido.total)}</T>
       </View>
 
       {pedido.items.length > 0 ? (
         <View style={s.items}>
           {pedido.items.map((item) => (
-            <Text key={item.id_producto} style={estilos.texto}>
-              {item.cantidad} × {item.nombre} <Text style={estilos.subtitulo}>· {pesos(item.cantidad * item.precio_unitario)}</Text>
-            </Text>
+            <View key={item.id_producto} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+              <T estilo={{ fontSize: 14, flex: 1 }}>{item.cantidad} × {item.nombre}</T>
+              <T variante="suave">{pesos(item.cantidad * item.precio_unitario)}</T>
+            </View>
           ))}
         </View>
       ) : (
-        <Insignia texto="Comprobante sin pedido previo: revisa el monto en la foto" color={COLORES.ambar} fondo={COLORES.ambarFondo} />
+        <T variante="suave">Comprobante sin pedido por WhatsApp.</T>
       )}
 
       {pedido.motivo_rechazo ? (
-        <Text style={[estilos.texto, { color: COLORES.rojo }]}>Motivo: {pedido.motivo_rechazo}</Text>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <Ionicons name="close-circle" size={16} color={COLORES.rojo} />
+          <T estilo={{ fontSize: 14, color: COLORES.rojo, flex: 1 }}>{pedido.motivo_rechazo}</T>
+        </View>
       ) : null}
 
-      {analisis}
-
-      {mostrarComprobante && pedido.ruta_comprobante && token ? (
-        <Image
-          source={imagenProtegida(pedido.ruta_comprobante, token)}
-          style={s.imagen}
-          resizeMode="contain"
-          accessibilityLabel={`Comprobante del pedido ${pedido.id_pedido}`}
-        />
-      ) : null}
-
-      <Text style={[estilos.subtitulo, { fontSize: 12 }]}>
+      <T variante="suave" estilo={{ fontSize: 12 }}>
         {fechaDestacada.etiqueta.charAt(0).toUpperCase() + fechaDestacada.etiqueta.slice(1)}: {fechaHora(fechaDestacada.valor)}
-      </Text>
+      </T>
 
-      {acciones ? <View style={s.acciones}>{acciones}</View> : null}
+      {acciones ? <View style={{ flexDirection: 'row', gap: 10 }}>{acciones}</View> : null}
     </Tarjeta>
   );
 }
 
 const s = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
-  cliente: { fontSize: 16, fontWeight: 'bold', color: COLORES.texto },
-  total: { fontSize: 18, fontWeight: 'bold', color: COLORES.verdeOscuro },
-  items: { backgroundColor: '#f6f8fa', borderRadius: 8, padding: 10, gap: 4 },
-  imagen: { width: '100%', height: 320, borderRadius: 10, backgroundColor: '#eef0f3' },
-  acciones: { flexDirection: 'row', gap: 10 },
+  items: { backgroundColor: COLORES.superficie, borderRadius: 10, padding: 10, gap: 4 },
 });

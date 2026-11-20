@@ -1,19 +1,19 @@
 import { useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { TarjetaPedido } from '@/components/tarjeta-pedido';
-import { Boton, COLORES, EstadoCarga, Pantalla, Titulo } from '@/components/ui';
+import { Boton, COLORES, Encabezado, EstadoCarga, Pantalla, T, type NombreIcono } from '@/components/ui';
 import { useDatos } from '@/hooks/use-datos';
 import { ErrorDeApi, SesionExpiradaError } from '@/lib/api';
 import { useSesion } from '@/lib/contexto-sesion';
 import { avisar, confirmar } from '@/lib/formato';
 import type { EstadoPedido, Pedido } from '@/lib/tipos';
 
-const PESTANAS: { estado: EstadoPedido; titulo: string; vacio: string; fecha: keyof Pedido; etiquetaFecha: string }[] = [
-  { estado: 'Aprobado', titulo: 'Por entregar', vacio: 'No hay pedidos pagados esperando retiro.', fecha: 'fecha_aprobacion', etiquetaFecha: 'pago aprobado' },
-  { estado: 'PorPagar', titulo: 'Por pagar', vacio: 'Ningún cliente tiene pedidos sin pagar.', fecha: 'fecha', etiquetaFecha: 'pedido' },
-  { estado: 'Entregado', titulo: 'Entregados', vacio: 'Aún no hay pedidos entregados.', fecha: 'fecha_entrega', etiquetaFecha: 'entregado' },
-  { estado: 'Rechazado', titulo: 'Rechazados', vacio: 'No hay pagos rechazados.', fecha: 'fecha_rechazo', etiquetaFecha: 'rechazado' },
+const PESTANAS: { estado: EstadoPedido; titulo: string; vacio: string; icono: NombreIcono; fecha: keyof Pedido; etiquetaFecha: string }[] = [
+  { estado: 'Aprobado', titulo: 'Por entregar', vacio: 'No hay pedidos pagados esperando retiro.', icono: 'bag-check-outline', fecha: 'fecha_aprobacion', etiquetaFecha: 'pago aprobado' },
+  { estado: 'PorPagar', titulo: 'Por pagar', vacio: 'Ningún cliente tiene pedidos sin pagar.', icono: 'time-outline', fecha: 'fecha', etiquetaFecha: 'pidió' },
+  { estado: 'Entregado', titulo: 'Entregados', vacio: 'Aún no hay pedidos entregados.', icono: 'checkmark-done-outline', fecha: 'fecha_entrega', etiquetaFecha: 'entregado' },
+  { estado: 'Rechazado', titulo: 'Rechazados', vacio: 'No hay pagos rechazados.', icono: 'close-circle-outline', fecha: 'fecha_rechazo', etiquetaFecha: 'rechazado' },
 ];
 
 /** Pedidos según su etapa: por entregar, por pagar e historial. */
@@ -21,26 +21,30 @@ export default function Ventas() {
   const [pestana, setPestana] = useState(PESTANAS[0]);
 
   return (
-    <Pantalla>
-      <Titulo>Ventas y entregas</Titulo>
-      <View style={s.pestanas}>
-        {PESTANAS.map((p) => (
-          <TouchableOpacity key={p.estado} onPress={() => setPestana(p)}
-            style={[s.pestana, pestana.estado === p.estado && s.pestanaActiva]}
-            accessibilityRole="tab" accessibilityState={{ selected: pestana.estado === p.estado }}>
-            <Text style={[s.pestanaTexto, pestana.estado === p.estado && { color: COLORES.verdeOscuro }]}>{p.titulo}</Text>
-          </TouchableOpacity>
-        ))}
+    <View style={{ flex: 1 }}>
+      <Encabezado titulo="Ventas y entregas" />
+      <View style={s.barra}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 16 }}>
+          {PESTANAS.map((p) => {
+            const activa = pestana.estado === p.estado;
+            return (
+              <TouchableOpacity key={p.estado} onPress={() => setPestana(p)} accessibilityRole="tab" accessibilityState={{ selected: activa }}
+                style={[s.pestana, activa && s.pestanaActiva]}>
+                <T variante="semi" estilo={{ fontSize: 13, color: activa ? '#ffffff' : COLORES.textoMedio }}>{p.titulo}</T>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
       {/* key: al cambiar de pestaña se monta una lista nueva con su propia carga */}
       <ListaPedidos key={pestana.estado} {...pestana} />
-    </Pantalla>
+    </View>
   );
 }
 
-function ListaPedidos({ estado, vacio, fecha, etiquetaFecha }: (typeof PESTANAS)[number]) {
+function ListaPedidos({ estado, vacio, icono, fecha, etiquetaFecha }: (typeof PESTANAS)[number]) {
   const { api } = useSesion();
-  const { datos, setDatos, error, cargando, recargar } = useDatos<Pedido[]>(`/pedidos?estado=${estado}`);
+  const { datos, setDatos, error, cargando, refrescando, recargar } = useDatos<Pedido[]>(`/pedidos?estado=${estado}`);
   const [procesando, setProcesando] = useState<number | null>(null);
 
   const entregar = async (pedido: Pedido) => {
@@ -59,26 +63,27 @@ function ListaPedidos({ estado, vacio, fecha, etiquetaFecha }: (typeof PESTANAS)
   };
 
   return (
-    <EstadoCarga cargando={cargando} error={error} alReintentar={recargar} vacio={datos?.length === 0} textoVacio={vacio}>
-      {datos?.map((pedido) => (
-        <TarjetaPedido
-          key={pedido.id_pedido}
-          pedido={pedido}
-          fechaDestacada={{ etiqueta: etiquetaFecha, valor: pedido[fecha] as string | null }}
-          acciones={estado === 'Aprobado' ? (
-            <Boton texto="Marcar entregado" icono="bag-check" estilo={{ flex: 1 }}
-              cargando={procesando === pedido.id_pedido} desactivado={procesando !== null}
-              alPresionar={() => entregar(pedido)} />
-          ) : undefined}
-        />
-      ))}
-    </EstadoCarga>
+    <Pantalla refrescando={refrescando} alRefrescar={recargar}>
+      <EstadoCarga cargando={cargando} error={error} alReintentar={recargar} vacio={datos?.length === 0} textoVacio={vacio} iconoVacio={icono}>
+        {datos?.map((pedido) => (
+          <TarjetaPedido
+            key={pedido.id_pedido}
+            pedido={pedido}
+            fechaDestacada={{ etiqueta: etiquetaFecha, valor: pedido[fecha] as string | null }}
+            acciones={estado === 'Aprobado' ? (
+              <Boton texto="Marcar entregado" tipo="exito" icono="bag-check" estilo={{ flex: 1 }}
+                cargando={procesando === pedido.id_pedido} desactivado={procesando !== null}
+                alPresionar={() => entregar(pedido)} />
+            ) : undefined}
+          />
+        ))}
+      </EstadoCarga>
+    </Pantalla>
   );
 }
 
 const s = StyleSheet.create({
-  pestanas: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  pestana: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, backgroundColor: '#eef0f3' },
-  pestanaActiva: { backgroundColor: COLORES.verdeFondo },
-  pestanaTexto: { fontWeight: '600', color: COLORES.textoSuave },
+  barra: { backgroundColor: '#ffffff', paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: COLORES.borde },
+  pestana: { minHeight: 36, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: COLORES.bordeFuerte, justifyContent: 'center' },
+  pestanaActiva: { backgroundColor: COLORES.texto, borderColor: COLORES.texto },
 });

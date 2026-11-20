@@ -31,17 +31,27 @@ export function diaCorto(dia: string) {
   return new Date(a, m - 1, d).toLocaleDateString('es-CL', { weekday: 'short' }).replace('.', '');
 }
 
-export const telefonoLegible = (telefono: string) =>
-  telefono.startsWith('lid:') ? 'Número oculto por WhatsApp' : `+${telefono}`;
-
-export const TEXTO_ESTADO_BOT: Record<EstadoBot, { texto: string; color: string }> = {
-  conectado: { texto: 'Conectado y recibiendo mensajes', color: '#1a7f37' },
-  iniciando: { texto: 'Iniciando…', color: '#9a6700' },
-  esperando_qr: { texto: 'Esperando que se escanee el QR en el servidor', color: '#9a6700' },
-  desconectado: { texto: 'Desconectado: reinicia el servidor', color: '#b42318' },
-  error_autenticacion: { texto: 'Error de sesión: vuelve a vincular WhatsApp', color: '#b42318' },
-  desactivado: { texto: 'Desactivado en el servidor (BOT_DESACTIVADO=1)', color: '#59636e' },
+export const TEXTO_ESTADO_BOT: Record<EstadoBot, { texto: string; textoCorto: string; color: string }> = {
+  conectado: { texto: 'Conectado y recibiendo mensajes', textoCorto: 'WhatsApp conectado', color: '#1a7f37' },
+  iniciando: { texto: 'Iniciando…', textoCorto: 'WhatsApp iniciando…', color: '#8a5a00' },
+  esperando_qr: { texto: 'Esperando que se escanee el QR en el servidor', textoCorto: 'WhatsApp: falta escanear el QR', color: '#8a5a00' },
+  desconectado: { texto: 'Desconectado: reinicia el servidor', textoCorto: 'WhatsApp desconectado', color: '#b42318' },
+  error_autenticacion: { texto: 'Error de sesión: vuelve a vincular WhatsApp', textoCorto: 'WhatsApp: error de sesión', color: '#b42318' },
+  desactivado: { texto: 'Desactivado en el servidor (BOT_DESACTIVADO=1)', textoCorto: 'WhatsApp desactivado', color: '#6b6266' },
 };
+
+/** "+56 9 1234 5678" para números chilenos; otros tal cual con "+". */
+export function telefonoBonito(telefono: string) {
+  if (telefono.startsWith('lid:')) return 'Número oculto por WhatsApp';
+  const m = telefono.match(/^56(9)(\d{4})(\d{4})$/);
+  return m ? `+56 ${m[1]} ${m[2]} ${m[3]}` : `+${telefono}`;
+}
+
+/** "Jueves 19 de noviembre" */
+export function fechaLarga(fecha = new Date()) {
+  const texto = fecha.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+  return texto.charAt(0).toUpperCase() + texto.slice(1);
+}
 
 /** Aviso simple que funciona en el teléfono y en la versión web. */
 export function avisar(titulo: string, mensaje?: string) {

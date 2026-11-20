@@ -50,8 +50,21 @@ async function obtener(db, ahora = new Date()) {
         [new Date(ahora.getTime() - 30 * 86_400_000)]
     );
 
+    // Comprobantes por revisar según la sugerencia de la IA (para destacar los sospechosos)
+    const [sugerencias] = await db.query(
+        `SELECT COALESCE(a.sugerencia, 'sin_analisis') AS sugerencia, COUNT(*) AS cantidad
+         FROM Pedidos p LEFT JOIN AnalisisComprobante a ON a.id_pedido = p.id_pedido AND a.estado = 'completado'
+         WHERE p.estado = 'Pendiente' GROUP BY 1`
+    );
+    const pendientesPorSugerencia = { rechazar: 0, revisar: 0, aprobar: 0, sin_analisis: 0 };
+    for (const { sugerencia, cantidad } of sugerencias) pendientesPorSugerencia[sugerencia] = Number(cantidad);
+
+    const [[{ activos }]] = await db.query('SELECT COUNT(*) AS activos FROM Productos WHERE activo = 1');
+
     return {
         porEstado,
+        pendientesPorSugerencia,
+        productosActivos: Number(activos),
         ventasPorDia,
         ventasSemana: {
             pedidos: ventasPorDia.reduce((s, d) => s + d.pedidos, 0),
