@@ -26,6 +26,42 @@ app.get('/api/pedidos/pendientes', async (req, res) => {
     }
 });
 
+app.put('/api/pedidos/:id/aprobar', async (req, res) => {
+    const idPedido = Number(req.params.id);
+    if (!Number.isInteger(idPedido) || idPedido <= 0) {
+        return res.status(400).json({ error: 'ID de pedido inválido' });
+    }
+
+    try {
+        // Solo se aprueban pedidos pendientes: evita aprobar dos veces
+        // o revivir un pedido rechazado/entregado.
+        const [resultado] = await db.query(
+            `UPDATE Pedidos
+             SET estado = 'Aprobado', fecha_aprobacion = NOW()
+             WHERE id_pedido = ? AND estado = 'Pendiente'`,
+            [idPedido]
+        );
+
+        if (resultado.affectedRows === 0) {
+            const [filas] = await db.query(
+                'SELECT estado FROM Pedidos WHERE id_pedido = ?',
+                [idPedido]
+            );
+            if (filas.length === 0) {
+                return res.status(404).json({ error: 'El pedido no existe' });
+            }
+            return res.status(409).json({
+                error: `El pedido ya está en estado "${filas[0].estado}"`
+            });
+        }
+
+        res.json({ id_pedido: idPedido, estado: 'Aprobado' });
+    } catch (error) {
+        console.error('Error al aprobar el pedido', idPedido, error);
+        res.status(500).json({ error: 'No se pudo aprobar el pedido' });
+    }
+});
+
 bot.initialize();
 
 app.listen(port, () => {

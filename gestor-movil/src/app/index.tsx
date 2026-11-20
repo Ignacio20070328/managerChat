@@ -29,8 +29,15 @@ export default function Index() {
         method: 'PUT',
       });
       if (response.ok) {
-        setPedidos(pedidos.filter(pedido => pedido.id_pedido !== idPedido));
+        setPedidos(prev => prev.filter(pedido => pedido.id_pedido !== idPedido));
         alert('Pago aprobado. El pedido pasó a la sección de entregas.');
+      } else {
+        const data = await response.json().catch(() => null);
+        if (response.status === 409 || response.status === 404) {
+          // Ya no está pendiente (o no existe): lo quitamos de la lista
+          setPedidos(prev => prev.filter(pedido => pedido.id_pedido !== idPedido));
+        }
+        alert(data?.error ?? 'No se pudo aprobar el pago');
       }
     } catch (error) {
       console.error("Error al aprobar el pago: ", error);
