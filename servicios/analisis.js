@@ -1,18 +1,34 @@
 // Revisión previa de comprobantes: la IA lee la imagen y estas REGLAS (sin IA)
 // comparan lo leído con el pedido, la configuración y otros comprobantes.
 // El resultado es solo una SUGERENCIA: aprobar o rechazar lo decide una persona.
+// Este módulo NUNCA cambia el estado de un pedido: solo escribe en AnalisisComprobante.
+//
+// Los análisis en segundo plano pasan por una cola con un máximo de IA_MAX_SIMULTANEOS
+// (por defecto 2) a la vez, para no superar los límites de uso del proveedor.
+// IA_SOLO_DEMO=1: solo se envían a la IA comprobantes de clientes de ejemplo
+// (obligatorio con claves de prueba que no permiten datos personales o financieros).
 
 const fs = require('fs/promises');
 const path = require('path');
 const { CARPETA_UPLOADS } = require('../config/carpetas');
 const configuracion = require('./configuracion');
 const { conflicto, noEncontrado } = require('../lib/errores');
+const { esTelefonoDemo } = require('../config/demo');
 const { cadenaDesdeEntorno } = require('./ia');
 
 const MIME_POR_EXTENSION = { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
 const DIAS_FECHA_ANTIGUA = 3;
 const pesos = (n) => new Intl.NumberFormat('es-CL', { style: 'currency', currency: 'CLP', maximumFractionDigits: 0 }).format(n);
 const soloDigitos = (s) => (s || '').replace(/\D/g, '');
+const modoSoloDemo = () => process.env.IA_SOLO_DEMO === '1';
+
+// Palabras que no sirven para comparar el nombre del titular
+const PALABRAS_COMUNES = new Set(['banco', 'cuenta', 'vista', 'corriente', 'ahorro', 'titular', 'nombre', 'correo',
+    'transferencia', 'datos', 'para', 'chile', 'estado', 'spa', 'ltda', 'limitada', 'empresa']);
+const palabrasDeNombre = (texto) => new Set(
+    (texto || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        .split(/[^a-z0-9ñ]+/).filter((p) => p.length >= 4 && !PALABRAS_COMUNES.has(p) && !/^\d+$/.test(p))
+);
 
 /**
  * Compara los datos leídos con el pedido y devuelve { alertas, sugerencia }.
@@ -34,6 +50,10 @@ function evaluar(datos, { pedido, datosTransferencia, operacionRepetida = {}, ah
     } else if (operacionRepetida.posterior) {
         alerta('operacion_reutilizada_despues', 'media',
             `Este comprobante parece el original, pero su N° de operación se volvió a enviar en el pedido #${operacionRepetida.posterior}.`);
+    }
+
+    if (datos.moneda && datos.moneda !== 'CLP') {
+        alerta('moneda_distinta', 'alta', `El comprobante está en ${datos.moneda}, no en pesos chilenos (CLP).`);
     }
 
     if (datos.monto == null) {
@@ -58,6 +78,24 @@ function evaluar(datos, { pedido, datosTransferencia, operacionRepetida = {}, ah
         if (!coincide) alerta('cuenta_distinta', 'alta', `La cuenta de destino (${datos.cuenta_destino}) no coincide con la configurada.`);
     } else {
         alerta('cuenta_ilegible', 'media', 'No se pudo leer la cuenta de destino.');
+    }
+
+    // Titular: basta que una palabra significativa del nombre leído aparezca en los datos de transferencia
+    const titularLeido = palabrasDeNombre(datos.titular_destino);
+    const textoConfigurado = palabrasDeNombre(datosTransferencia);
+    if (titularLeido.size > 0 && textoConfigurado.size > 0 && ![...titularLeido].some((p) => textoConfigurado.has(p))) {
+        alerta('titular_distinto', 'media', `El destinatario (${datos.titular_destino}) no coincide con el titular configurado.`);
+    }
+
+    // Datos que la IA no pudo leer (los ilegibles de monto y cuenta ya tienen su propia alerta)
+    if (datos.es_comprobante !== false) {
+        const faltantes = [
+            !datos.numero_operacion && 'N° de operación',
+            !datos.fecha_transferencia && 'fecha'
+        ].filter(Boolean);
+        if (faltantes.length) {
+            alerta('datos_incompletos', 'media', `No se pudo leer: ${faltantes.join(' y ')}. Revísalo en la foto.`);
+        }
     }
 
     if (datos.fecha_transferencia) {
@@ -87,7 +125,7 @@ async function guardar(db, idPedido, campos) {
 
 const VACIO = {
     proveedor: null, modelo: null, es_comprobante: null, monto: null, banco_origen: null, banco_destino: null,
-    cuenta_destino: null, titular_destino: null, numero_operacion: null, fecha_transferencia: null,
+    moneda: null, cuenta_destino: null, titular_destino: null, numero_operacion: null, fecha_transferencia: null,
     alertas: null, sugerencia: null, error: null
 };
 
@@ -99,11 +137,19 @@ async function analizarPedido(db, idPedido, { cadena = cadenaDesdeEntorno() } = 
     if (!cadena.activa) throw conflicto('La IA no está configurada en el servidor (IA_PROVEEDORES)');
 
     const [filas] = await db.query(
-        'SELECT id_pedido, total, ruta_comprobante, fecha_comprobante FROM Pedidos WHERE id_pedido = ?', [idPedido]
+        `SELECT p.id_pedido, p.total, p.ruta_comprobante, p.fecha_comprobante, c.telefono
+         FROM Pedidos p JOIN Clientes c ON c.id_cliente = p.id_cliente WHERE p.id_pedido = ?`, [idPedido]
     );
     if (filas.length === 0) throw noEncontrado('El pedido no existe');
     const pedido = filas[0];
     if (!pedido.ruta_comprobante) throw conflicto('El pedido aún no tiene comprobante');
+    if (modoSoloDemo() && !esTelefonoDemo(pedido.telefono)) {
+        const mensaje = 'La IA está en modo demostración (IA_SOLO_DEMO): solo revisa comprobantes de ejemplo, no de clientes reales.';
+        // Si quedó un análisis a medias (p. ej. de antes de activar el modo demo), no debe quedar "procesando" para siempre
+        await db.query("UPDATE AnalisisComprobante SET estado = 'fallido', error = ? WHERE id_pedido = ? AND estado = 'procesando'",
+            [mensaje.slice(0, 255), idPedido]);
+        throw conflicto(mensaje);
+    }
 
     // basename: la ruta viene de la base, pero nunca se lee fuera de la carpeta de comprobantes
     const archivo = path.basename(pedido.ruta_comprobante);
@@ -141,14 +187,59 @@ async function analizarPedido(db, idPedido, { cadena = cadenaDesdeEntorno() } = 
     return obtener(db, idPedido);
 }
 
-/** Lanza el análisis sin esperar (para no demorar la respuesta al cliente en WhatsApp). */
-function analizarEnSegundoPlano(db, idPedido) {
-    const cadena = cadenaDesdeEntorno();
-    if (!cadena.activa) return;
-    analizarPedido(db, idPedido, { cadena }).catch((error) => {
-        console.error(`IA: error al analizar el pedido #${idPedido}:`, error.message);
-    });
+// ---------- Cola de análisis en segundo plano ----------
+
+const cola = [];             // { db, idPedido, cadena }
+const enCola = new Set();    // ids esperando o en curso (evita analizar dos veces el mismo)
+let enCurso = 0;
+
+function maxSimultaneos() {
+    const n = Number(process.env.IA_MAX_SIMULTANEOS);
+    return Number.isInteger(n) && n > 0 ? n : 2;
 }
+
+function procesarCola() {
+    while (enCurso < maxSimultaneos() && cola.length > 0) {
+        const { db, idPedido, cadena } = cola.shift();
+        enCurso++;
+        analizarPedido(db, idPedido, { cadena })
+            .catch((error) => {
+                if (error.status === 409) console.log(`IA: pedido #${idPedido} omitido (${error.message})`);
+                else console.error(`IA: error al analizar el pedido #${idPedido}:`, error.message);
+            })
+            .finally(() => {
+                enCurso--;
+                enCola.delete(idPedido);
+                procesarCola();
+            });
+    }
+}
+
+/**
+ * Pone el análisis en la cola y vuelve de inmediato: no demora el registro del
+ * comprobante ni la respuesta al cliente en WhatsApp.
+ */
+function analizarEnSegundoPlano(db, idPedido, { cadena = cadenaDesdeEntorno() } = {}) {
+    if (!cadena.activa || enCola.has(idPedido)) return;
+    enCola.add(idPedido);
+    cola.push({ db, idPedido, cadena });
+    procesarCola();
+}
+
+/**
+ * Al arrancar el servidor: los análisis que quedaron "procesando" se interrumpieron
+ * (reinicio o caída) y se vuelven a poner en la cola.
+ * @returns cantidad de análisis recuperados
+ */
+async function recuperarPendientes(db, { cadena = cadenaDesdeEntorno() } = {}) {
+    if (!cadena.activa) return 0;
+    const [filas] = await db.query("SELECT id_pedido FROM AnalisisComprobante WHERE estado = 'procesando'");
+    for (const { id_pedido } of filas) analizarEnSegundoPlano(db, id_pedido, { cadena });
+    return filas.length;
+}
+
+/** Para pruebas: cuántos análisis esperan y cuántos están en curso. */
+const estadoCola = () => ({ esperando: cola.length, enCurso });
 
 function aAnalisis(fila) {
     const { id_pedido, ...resto } = fila;
@@ -171,4 +262,4 @@ async function obtenerVarios(db, ids) {
     return new Map(filas.map((f) => [f.id_pedido, aAnalisis(f)]));
 }
 
-module.exports = { analizarEnSegundoPlano, analizarPedido, evaluar, obtener, obtenerVarios };
+module.exports = { analizarEnSegundoPlano, analizarPedido, estadoCola, evaluar, obtener, obtenerVarios, recuperarPendientes };

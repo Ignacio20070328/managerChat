@@ -32,8 +32,8 @@ export type EstadoFila = 'ok' | 'aviso' | 'mal' | 'neutro';
 
 /** Qué fila de la comparación afecta cada tipo de alerta (ver servicios/analisis.js del backend). */
 const FILA_DE_ALERTA: Record<string, 'monto' | 'cuenta' | 'fecha' | 'operacion'> = {
-  monto_menor: 'monto', monto_mayor: 'monto', monto_ilegible: 'monto', pedido_sin_total: 'monto',
-  cuenta_distinta: 'cuenta', cuenta_ilegible: 'cuenta', sin_cuenta_configurada: 'cuenta',
+  monto_menor: 'monto', monto_mayor: 'monto', monto_ilegible: 'monto', pedido_sin_total: 'monto', moneda_distinta: 'monto',
+  cuenta_distinta: 'cuenta', cuenta_ilegible: 'cuenta', sin_cuenta_configurada: 'cuenta', titular_distinto: 'cuenta',
   fecha_antigua: 'fecha', fecha_futura: 'fecha',
   operacion_repetida: 'operacion', operacion_reutilizada_despues: 'operacion',
 };

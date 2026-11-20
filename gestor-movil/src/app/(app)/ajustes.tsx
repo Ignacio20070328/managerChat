@@ -52,6 +52,11 @@ export default function Ajustes() {
             <T variante="suave">
               {!ia ? 'Consultando…' : ia.activa ? `Activa: ${ia.proveedores.join(' → ')}` : 'Desactivada (se configura en el servidor)'}
             </T>
+            {ia?.activa && ia.soloDemo ? (
+              <T variante="semi" estilo={{ fontSize: 12, color: COLORES.ambar }}>
+                Modo demostración: solo revisa comprobantes de ejemplo. Los de tus clientes los revisas tú.
+              </T>
+            ) : null}
           </View>
         </Tarjeta>
 

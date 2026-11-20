@@ -9,8 +9,9 @@ Analiza la imagen y responde SOLO con un objeto JSON (sin texto adicional ni blo
 
 {
   "es_comprobante": true | false,      // ¿la imagen es un comprobante de transferencia o pago?
-  "monto": número entero en pesos chilenos sin puntos ni símbolo, o null,
-  "banco_origen": texto o null,        // banco desde el que se transfirió
+  "monto": número entero sin puntos ni símbolo, o null,
+  "moneda": código de 3 letras (CLP, USD…) o null,
+  "banco_origen": texto o null,        // banco desde el que se transfirió (suele ser el logo o la cabecera)
   "banco_destino": texto o null,       // banco que recibe
   "cuenta_destino": texto o null,      // número de cuenta que recibe, tal como aparece
   "titular_destino": texto o null,     // nombre de quien recibe
@@ -24,9 +25,31 @@ Reglas:
 - No apruebes ni rechaces nada: solo extrae los datos.`;
 
 const CAMPOS = [
-    'es_comprobante', 'monto', 'banco_origen', 'banco_destino', 'cuenta_destino',
+    'es_comprobante', 'monto', 'moneda', 'banco_origen', 'banco_destino', 'cuenta_destino',
     'titular_destino', 'numero_operacion', 'fecha_transferencia'
 ];
+
+const textoONulo = { type: ['string', 'null'] };
+/**
+ * Esquema JSON de la respuesta, para proveedores con "salida estructurada"
+ * (obliga al modelo a responder exactamente con estos campos).
+ */
+const ESQUEMA_JSON = {
+    type: 'object',
+    additionalProperties: false,
+    required: CAMPOS,
+    properties: {
+        es_comprobante: { type: 'boolean' },
+        monto: { type: ['integer', 'null'] },
+        moneda: textoONulo,
+        banco_origen: textoONulo,
+        banco_destino: textoONulo,
+        cuenta_destino: textoONulo,
+        titular_destino: textoONulo,
+        numero_operacion: textoONulo,
+        fecha_transferencia: textoONulo
+    }
+};
 
 const MONTO_MAXIMO = 100_000_000;
 
@@ -98,6 +121,7 @@ function normalizarRespuesta(respuesta) {
     return {
         es_comprobante: typeof datos.es_comprobante === 'boolean' ? datos.es_comprobante : null,
         monto: monto(datos.monto),
+        moneda: typeof datos.moneda === 'string' && /^[A-Za-z]{3}$/.test(datos.moneda.trim()) ? datos.moneda.trim().toUpperCase() : null,
         banco_origen: texto(datos.banco_origen, 80),
         banco_destino: texto(datos.banco_destino, 80),
         cuenta_destino: texto(datos.cuenta_destino, 60),
@@ -107,4 +131,4 @@ function normalizarRespuesta(respuesta) {
     };
 }
 
-module.exports = { CAMPOS, INSTRUCCIONES, normalizarRespuesta };
+module.exports = { CAMPOS, ESQUEMA_JSON, INSTRUCCIONES, normalizarRespuesta };

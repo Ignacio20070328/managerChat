@@ -14,6 +14,7 @@ const { crearApp } = require('./app');
 const { crearBot } = require('./bot/whatsapp');
 const { prepararCarpeta } = require('./bot/comprobantes');
 const { cadenaDesdeEntorno } = require('./servicios/ia');
+const { recuperarPendientes } = require('./servicios/analisis');
 
 // Valida IA_PROVEEDORES al arrancar (un nombre mal escrito detiene el servidor con un mensaje claro)
 cadenaDesdeEntorno();
@@ -38,8 +39,13 @@ const botApagado = { estado: () => 'desactivado', notificar: async () => false, 
         if (botDesactivado) console.log('Bot de WhatsApp DESACTIVADO (BOT_DESACTIVADO=1)');
         const ia = cadenaDesdeEntorno();
         console.log(ia.activa
-            ? `IA para revisar comprobantes: ${ia.nombres.join(' → ')}`
+            ? `IA para revisar comprobantes: ${ia.nombres.join(' → ')}` +
+              (process.env.IA_SOLO_DEMO === '1' ? ' (MODO DEMO: solo comprobantes de ejemplo)' : '')
             : 'IA para revisar comprobantes: desactivada (IA_PROVEEDORES vacío)');
+        // Análisis interrumpidos por un reinicio: se vuelven a poner en la cola
+        recuperarPendientes(db)
+            .then((n) => { if (n > 0) console.log(`IA: ${n} análisis interrumpidos vuelven a la cola`); })
+            .catch((error) => console.error('IA: no se pudieron recuperar los análisis pendientes:', error.message));
     });
 
     bot.iniciar().catch((error) => {
