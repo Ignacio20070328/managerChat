@@ -7,7 +7,9 @@
     "start": "node index.js",
     "dev": "node --watch index.js",
     "crear-password": "node scripts/crear-password.js",
-    "api": "BOT_DESACTIVADO=1 node --watch index.js"
+    "api": "BOT_DESACTIVADO=1 node --watch index.js",
+    "demo:cargar": "node scripts/demo.js cargar",
+    "demo:borrar": "node scripts/demo.js borrar"
   },
   "keywords": [],
   "author": "",

@@ -85,6 +85,8 @@ npm run crear-password          # contraseña de acceso a la app (se guarda solo
 docker compose up -d            # MySQL 8 solo en 127.0.0.1:3306, crea tablas y usuario gestor_app
 npm start                       # API + bot (pide escanear el QR). npm run dev: reinicia al guardar.
 npm run api                     # solo la API, SIN WhatsApp (para trabajar en la app)
+npm run demo:cargar             # datos de ejemplo (pedidos en todas las etapas, comprobantes, análisis IA simulado)
+npm run demo:borrar             # borra SOLO los de ejemplo (teléfonos 5690000…, productos "(ejemplo)")
 
 cd gestor-movil && npm install  # app: dependencias SOLO aquí, nunca en la raíz
 cp .env.example .env.local      # poner la IP del computador en EXPO_PUBLIC_API_URL
