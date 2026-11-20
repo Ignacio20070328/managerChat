@@ -16,7 +16,9 @@ App móvil (gestor-movil/, Expo) ◀──── API REST (app.js, Express, puer
 
 | Parte | Ubicación | Notas |
 |---|---|---|
-| API REST | `app.js` | Express 5. Carga `.env` con ruta absoluta. |
+| API REST | `app.js` | Express 5. Carga `.env` con ruta absoluta. No arranca sin contraseña configurada. |
+| Autenticación | `lib/auth.js` | Hash scrypt de la contraseña, tokens HMAC de 30 días, límite de intentos de login. |
+| Script de contraseña | `scripts/crear-password.js` | `npm run crear-password`: guarda el hash en `.env` y rota `TOKEN_SECRET` (cierra todas las sesiones). |
 | Conexión BD | `config/db.js` | Pool `mysql2/promise`. Lee credenciales del `.env`; falla al arrancar si faltan. **Fechas en UTC** (`timezone: 'Z'` + `time_zone '+00:00'`). |
 | Bot WhatsApp | `bot/whatsapp.js` | `whatsapp-web.js` 1.34.8 (no oficial, usa Chromium). Filtra mensajes, obtiene teléfono real y responde al cliente. |
 | Registro de comprobantes | `bot/comprobantes.js` | Lógica separada de WhatsApp para poder probarla. Transacción: cliente + pedido + imagen, todo o nada. |
@@ -29,11 +31,17 @@ App móvil (gestor-movil/, Expo) ◀──── API REST (app.js, Express, puer
   (ENUM `Pendiente|Aprobado|Rechazado|Entregado`), `fecha`, `fecha_aprobacion`. Índice `(estado, fecha)`.
 
 ### API
+Todo exige `Authorization: Bearer <token>` (401 si falta o es inválido), salvo el login.
+
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/pedidos/pendientes` | Pedidos en estado Pendiente con teléfono del cliente. |
+| POST | `/api/login` | `{ password }` → `{ token }`. 401 incorrecta; 429 tras 5 fallos por IP en 15 min. Pública. |
+| GET | `/api/pedidos/pendientes` | Pedidos Pendientes (más antiguos primero) con teléfono del cliente. |
 | PUT | `/api/pedidos/:id/aprobar` | Aprueba solo si está Pendiente. 200 / 400 ID inválido / 404 / 409 ya no pendiente. |
-| GET | `/uploads/<archivo>` | Imágenes de comprobantes (estático). |
+| GET | `/uploads/<archivo>` | Imágenes de comprobantes (estático, también con token). |
+
+CORS desactivado salvo para los orígenes de `CORS_ORIGINS` (la app nativa no lo necesita).
+La app guarda el token con `expo-secure-store` (web: `localStorage`) — ver `gestor-movil/src/lib/`.
 
 ### Comportamiento del bot
 - Solo chats individuales (`@c.us` / `@lid`); ignora grupos, estados y mensajes propios.
@@ -46,12 +54,14 @@ App móvil (gestor-movil/, Expo) ◀──── API REST (app.js, Express, puer
 ## Puesta en marcha
 
 ```bash
-cp .env.example .env            # completar contraseñas (comando para generarlas dentro del archivo)
+cp .env.example .env            # completar contraseñas de la BD (comando para generarlas dentro del archivo)
 npm install                     # backend, en la RAÍZ
+npm run crear-password          # contraseña de acceso a la app (se guarda solo su hash)
 docker compose up -d            # MySQL 8 solo en 127.0.0.1:3306, crea tablas y usuario gestor_app
 npm start                       # o: npm run dev (reinicia al guardar). Pide escanear QR de WhatsApp.
 
 cd gestor-movil && npm install  # app: dependencias SOLO aquí, nunca en la raíz
+cp .env.example .env.local      # poner la IP del computador en EXPO_PUBLIC_API_URL
 npx expo start
 ```
 
@@ -63,7 +73,10 @@ Aplicar el esquema a mano (no borra datos):
 
 - **Nunca commitear** `.env`, `.wwebjs_auth/`, `.wwebjs_cache/` ni `public/uploads/` (ya están en `.gitignore`).
   En el pasado se subió la sesión de WhatsApp al repo público y hubo que reescribir el historial.
-- No escribir credenciales ni IPs en el código: van en `.env` (backend) o `EXPO_PUBLIC_*` (app).
+- No escribir credenciales ni IPs en el código: van en `.env` (backend) o `gestor-movil/.env.local` (app).
+- **Nunca poner secretos en `EXPO_PUBLIC_*`**: Expo los copia en texto plano dentro de la app compilada.
+  Por eso la app usa login con contraseña y no una clave fija.
+- Rutas nuevas de la API: definirlas después de `app.use('/api', conSesion)` para que exijan sesión.
 - No instalar dependencias de Expo/React Native en la raíz: van en `gestor-movil/`.
 - Errores de la API: registrar el detalle con `console.error` y responder un mensaje genérico (no `error.message`).
 - Cambios de estado de pedidos: condicionar el `UPDATE` al estado actual (evita carreras y dobles aprobaciones).
@@ -79,12 +92,15 @@ Hecho (auditoría inicial → pasos):
 2. ✅ `db/schema.sql`, endpoint `PUT /aprobar`, corrección de fechas (desfase de 3 h por zona horaria).
 3. ✅ Bot: teléfono real (LID), transacción sin huérfanos, sin clientes duplicados, respuestas al cliente,
    filtro de grupos, validación de imagen, nombres aleatorios, rutas absolutas.
+4. ✅ Autenticación: login con contraseña (hash en `.env`), tokens de 30 días, `/uploads` protegido,
+   límite de intentos, CORS restringido, errores genéricos, pantalla de login y cierre de sesión en la app,
+   URL del servidor en `EXPO_PUBLIC_API_URL`.
 
 Pendiente:
-4. **Autenticación de la API** — hoy cualquiera en la red puede ver comprobantes y aprobar pagos.
-   Clave compartida app↔backend en `.env`; servir `/uploads` solo autenticado; no filtrar `error.message`
-   en `GET /pendientes` y ordenarlo por fecha.
-5. **App móvil** — IP a `EXPO_PUBLIC_API_URL`; separar secciones en rutas de Expo Router (hoy todo vive en
+- Sin HTTPS: en la wifi local la contraseña y el token viajan sin cifrar. Para producción, HTTPS
+  (proxy inverso o túnel). Android además bloquea HTTP en builds de release.
+- El límite de intentos vive en memoria (se reinicia con el servidor) y es por IP.
+5. **App móvil** — separar secciones en rutas de Expo Router (hoy todo vive en
    `src/app/index.tsx` con `useState`); quitar restos de plantilla (`explore.tsx`, logos de Expo/React);
    pull-to-refresh y estados de carga/error; `expo-image`; comprimir imágenes; `Alert.alert`;
    `GET /api/pedidos/aprobados` para "Ventas / Entregas"; estado real del bot en vez de texto fijo.
