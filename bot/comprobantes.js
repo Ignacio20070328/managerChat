@@ -1,6 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const { adjuntarComprobante, enTransaccion } = require('../servicios/pedidos');
 
 const CARPETA_UPLOADS = path.join(__dirname, '../public/uploads');
 const TAMANO_MAXIMO_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -36,50 +37,31 @@ function validarImagen(media) {
 }
 
 /**
- * Registra el comprobante: crea el cliente si no existe, crea el pedido y
- * guarda la imagen. Todo o nada: si algo falla, no queda ni la fila en la
- * base ni el archivo en disco.
- * @returns {Promise<{ idPedido: number, ruta: string }>}
+ * Registra el comprobante: lo asocia al pedido PorPagar del cliente (o crea un
+ * pedido nuevo si no tenía) y guarda la imagen. Todo o nada: si algo falla, no
+ * queda ni el cambio en la base ni el archivo en disco.
+ * @returns {Promise<{ idPedido: number, total: number|null, ruta: string }>}
  */
 async function registrarComprobante(db, telefono, media) {
     const { extension, datos } = validarImagen(media);
 
-    // Nombre aleatorio: no expone el teléfono del cliente en la URL pública
+    // Nombre aleatorio: no expone el teléfono del cliente en la URL
     const nombreArchivo = `comprobante_${crypto.randomUUID()}.${extension}`;
     const rutaDisco = path.join(CARPETA_UPLOADS, nombreArchivo);
     const rutaPublica = `/uploads/${nombreArchivo}`;
 
-    const conexion = await db.getConnection();
     let archivoEscrito = false;
     try {
-        await conexion.beginTransaction();
-
-        // Crea el cliente o recupera su id en una sola operación atómica.
-        // Evita duplicados si llegan dos comprobantes a la vez.
-        const [cliente] = await conexion.query(
-            `INSERT INTO Clientes (telefono) VALUES (?)
-             ON DUPLICATE KEY UPDATE id_cliente = LAST_INSERT_ID(id_cliente)`,
-            [telefono]
-        );
-
-        const [pedido] = await conexion.query(
-            'INSERT INTO Pedidos (id_cliente, ruta_comprobante) VALUES (?, ?)',
-            [cliente.insertId, rutaPublica]
-        );
-
-        await fs.writeFile(rutaDisco, datos, { flag: 'wx' });
-        archivoEscrito = true;
-
-        await conexion.commit();
-        return { idPedido: pedido.insertId, ruta: rutaPublica };
+        return await enTransaccion(db, async (conexion) => {
+            const { idPedido, total } = await adjuntarComprobante(conexion, telefono, rutaPublica);
+            await fs.writeFile(rutaDisco, datos, { flag: 'wx' });
+            archivoEscrito = true;
+            return { idPedido, total, ruta: rutaPublica };
+        });
     } catch (error) {
-        await conexion.rollback().catch(() => {});
-        if (archivoEscrito) {
-            await fs.unlink(rutaDisco).catch(() => {});
-        }
+        // La transacción ya se revirtió; si el archivo alcanzó a escribirse, se borra
+        if (archivoEscrito) await fs.unlink(rutaDisco).catch(() => {});
         throw error;
-    } finally {
-        conexion.release();
     }
 }
 

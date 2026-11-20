@@ -2,11 +2,12 @@
   "name": "chatsatomatizados",
   "version": "1.0.0",
   "description": "",
-  "main": "app.js",
+  "main": "index.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "node --watch app.js",
-    "crear-password": "node scripts/crear-password.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "crear-password": "node scripts/crear-password.js",
+    "api": "BOT_DESACTIVADO=1 node --watch index.js"
   },
   "keywords": [],
   "author": "",
