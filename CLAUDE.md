@@ -113,6 +113,9 @@ Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea e
 
 ## Reglas del proyecto
 
+- **Flujo con ramas** (ver `FLUJO_DE_TRABAJO.md`): nada directo en `main`; una rama por cambio y pull request
+  revisado por el otro integrante.
+
 - **Nunca commitear** `.env`, `.wwebjs_auth/`, `.wwebjs_cache/` ni `public/uploads/` (ya están en `.gitignore`).
   En el pasado se subió la sesión de WhatsApp al repo público y hubo que reescribir el historial.
 - No escribir credenciales ni IPs en el código: van en `.env` (backend) o `gestor-movil/.env.local` (app).
