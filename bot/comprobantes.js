@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { adjuntarComprobante, enTransaccion } = require('../servicios/pedidos');
 
-const CARPETA_UPLOADS = path.join(__dirname, '../public/uploads');
+const { CARPETA_UPLOADS } = require('../config/carpetas');
 const TAMANO_MAXIMO_BYTES = 10 * 1024 * 1024; // 10 MB
 
 // Solo se aceptan estos formatos de imagen

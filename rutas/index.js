@@ -4,14 +4,17 @@ const pedidos = require('../servicios/pedidos');
 const productos = require('../servicios/productos');
 const configuracion = require('../servicios/configuracion');
 const resumen = require('../servicios/resumen');
+const analisis = require('../servicios/analisis');
+const { cadenaDesdeEntorno } = require('../servicios/ia');
 const mensajes = require('../bot/mensajes');
 
 /**
  * Rutas autenticadas de la API. Express 5 envía al manejador de errores
  * cualquier excepción de un handler async (incluidos los ErrorApi).
  * @param bot { estado(): string, notificar(telefono, texto): Promise<boolean> }
+ * @param ia  cadena de proveedores de IA (servicios/ia); por defecto la del .env
  */
-function crearRutas({ db, bot }) {
+function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
     const r = express.Router();
 
     // --- Pedidos ---
@@ -33,6 +36,13 @@ function crearRutas({ db, bot }) {
         const pedido = await pedidos.rechazar(db, idValido(req.params.id, 'ID de pedido'), req.body?.motivo);
         const notificado = await bot.notificar(pedido.telefono, mensajes.pagoRechazado(pedido));
         res.json({ ...pedido, notificado });
+    });
+
+    // Vuelve a analizar el comprobante con IA (espera el resultado)
+    r.post('/pedidos/:id/analizar', async (req, res) => {
+        const id = idValido(req.params.id, 'ID de pedido');
+        await analisis.analizarPedido(db, id, { cadena: ia });
+        res.json(await pedidos.obtener(db, id));
     });
 
     r.put('/pedidos/:id/entregar', async (req, res) => {
@@ -63,7 +73,7 @@ function crearRutas({ db, bot }) {
 
     // --- Inicio / Estadísticas ---
     r.get('/resumen', async (req, res) => {
-        res.json({ ...(await resumen.obtener(db)), bot: bot.estado() });
+        res.json({ ...(await resumen.obtener(db)), bot: bot.estado(), ia: { activa: ia.activa, proveedores: ia.nombres } });
     });
 
     return r;

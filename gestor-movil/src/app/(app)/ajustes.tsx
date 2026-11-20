@@ -44,6 +44,21 @@ export default function Ajustes() {
         </View>
       </Tarjeta>
 
+      <Tarjeta estilo={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <Ionicons name="sparkles" size={24} color={resumen.datos?.ia.activa ? COLORES.azul : COLORES.textoSuave} />
+        <View style={{ flex: 1 }}>
+          <Text style={estilos.etiqueta}>IA para revisar comprobantes</Text>
+          <Text style={estilos.texto}>
+            {!resumen.datos ? 'Consultando…'
+              : resumen.datos.ia.activa ? `Activa: ${resumen.datos.ia.proveedores.join(' → ')}`
+              : 'Desactivada (se configura en el servidor: IA_PROVEEDORES)'}
+          </Text>
+          {resumen.datos?.ia.activa && resumen.datos.ia.proveedores.length > 1 ? (
+            <Text style={estilos.subtitulo}>Si el primero falla o se queda sin créditos, se usa el siguiente.</Text>
+          ) : null}
+        </View>
+      </Tarjeta>
+
       <Tarjeta>
         <Text style={estilos.etiqueta}>Acerca de</Text>
         <Text style={estilos.texto}>Versión {Constants.expoConfig?.version ?? '—'}</Text>

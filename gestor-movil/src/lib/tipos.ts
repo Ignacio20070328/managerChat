@@ -23,6 +23,32 @@ export interface Pedido {
   fecha_rechazo: string | null;
   fecha_entrega: string | null;
   items: ItemPedido[];
+  analisis: Analisis | null; // revisión previa con IA (null si no se ha analizado)
+}
+
+export interface AlertaAnalisis {
+  tipo: string;
+  gravedad: 'alta' | 'media';
+  mensaje: string;
+}
+
+/** Revisión previa con IA. Es solo una sugerencia: aprobar o rechazar lo decide una persona. */
+export interface Analisis {
+  estado: 'procesando' | 'completado' | 'fallido';
+  proveedor: string | null;
+  modelo: string | null;
+  es_comprobante: boolean | null;
+  monto: number | null;
+  banco_origen: string | null;
+  banco_destino: string | null;
+  cuenta_destino: string | null;
+  titular_destino: string | null;
+  numero_operacion: string | null;
+  fecha_transferencia: string | null;
+  alertas: AlertaAnalisis[] | null;
+  sugerencia: 'aprobar' | 'revisar' | 'rechazar' | null;
+  error: string | null;
+  fecha_analisis: string;
 }
 
 export interface Producto {
@@ -46,4 +72,5 @@ export interface Resumen {
   ventasSemana: { pedidos: number; monto: number };
   productosUltimos30Dias: { nombre: string; unidades: number; monto: number }[];
   bot: EstadoBot;
+  ia: { activa: boolean; proveedores: string[] };
 }

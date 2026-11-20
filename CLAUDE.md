@@ -23,7 +23,9 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | `index.js` | Punto de entrada: carga `.env`, valida auth, crea bot y app, escucha. `BOT_DESACTIVADO=1` omite WhatsApp. |
 | `app.js` | `crearApp({ db, auth, bot })`: construye Express **sin efectos** (testeable). Login público; todo `/api` y `/uploads` con sesión. |
 | `rutas/index.js` | Rutas HTTP autenticadas; delegan en `servicios/`. Express 5 envía los errores async al manejador. |
-| `servicios/` | Lógica de negocio y SQL: `pedidos.js` (ciclo de vida, transacciones), `productos.js`, `configuracion.js`, `resumen.js`. Lanzan `ErrorApi` (`lib/errores.js`) con código y mensaje apto para el usuario. |
+| `servicios/` | Lógica de negocio y SQL: `pedidos.js` (ciclo de vida, transacciones), `productos.js`, `configuracion.js`, `resumen.js`, `analisis.js` (revisión con IA + reglas). Lanzan `ErrorApi` (`lib/errores.js`) con código y mensaje apto para el usuario. |
+| `servicios/ia/` | Cadena de proveedores de IA con respaldo (`index.js`), instrucciones y validación comunes (`esquema.js`) y un archivo por proveedor en `proveedores/`. |
+| `config/carpetas.js` | `CARPETA_UPLOADS` (fotos de comprobantes). |
 | `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` 1.34.8 (no oficial), estado de conexión y `notificar(telefono, texto)`. |
 | `bot/conversacion.js` | `procesarTexto(db, telefono, texto)` → respuesta o `null`. No depende de WhatsApp. |
 | `bot/comprobantes.js` | Valida la imagen y la registra con el pedido en una transacción (archivo + fila, todo o nada). |
@@ -41,6 +43,8 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
   → `Entregado`. Máximo un `PorPagar` por cliente (un pedido nuevo lo reemplaza).
 - **DetallePedido**: copia `precio_unitario` al pedir (cambiar el catálogo no altera pedidos antiguos).
 - **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`).
+- **AnalisisComprobante**: 1:1 con el pedido (reanalizar la reemplaza): `estado` (procesando/completado/fallido),
+  `proveedor`, datos leídos (monto, bancos, cuenta, titular, N° de operación, fecha), `alertas` JSON y `sugerencia`.
 
 ### API (todo con `Authorization: Bearer <token>` salvo el login)
 | Método | Ruta | Descripción |
@@ -49,9 +53,10 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | GET | `/api/pedidos?estado=` | Lista por estado con `items`. Lo que espera acción, más antiguo primero; historial (máx. 100), más reciente primero. |
 | GET | `/api/pedidos/:id` | Un pedido con `items`. |
 | PUT | `/api/pedidos/:id/aprobar` · `/rechazar` `{ motivo }` · `/entregar` | Transiciones atómicas (409 si el estado no corresponde). Aprobar y rechazar avisan al cliente y devuelven `notificado`. |
+| POST | `/api/pedidos/:id/analizar` | Reanaliza el comprobante con IA y espera el resultado. 409 si la IA está desactivada o no hay comprobante. Cada pedido de las listas trae `analisis`. |
 | GET/POST/PUT | `/api/productos`, `/api/productos/:id` | Catálogo (activos primero, luego por nombre: ese orden numera el menú del bot). |
 | GET/PUT | `/api/configuracion` | Nombre del negocio y datos de transferencia. |
-| GET | `/api/resumen` | Conteo por estado, ventas de 7 días por día local (`ZONA_HORARIA`, por defecto America/Santiago), productos más vendidos (30 días) y estado del bot. |
+| GET | `/api/resumen` | Conteo por estado, ventas de 7 días por día local (`ZONA_HORARIA`, por defecto America/Santiago), productos más vendidos (30 días), estado del bot e `ia: { activa, proveedores }`. |
 | GET | `/uploads/<archivo>` | Foto del comprobante (con token). |
 
 ### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
@@ -129,13 +134,24 @@ Pendiente:
 - 16 vulnerabilidades de `npm audit`, todas vía `whatsapp-web.js` → puppeteer. No usar `npm audit fix --force`.
 - Si se cae la sesión de WhatsApp, el bot no se reconecta solo (la app lo muestra en Inicio y Ajustes).
 
-### Plan de IA
+### IA (revisión previa de comprobantes) — estructura lista, proveedores reales pendientes
 Proveedor **externo, NO Claude**: **NVIDIA principal y Gemini de respaldo** (modelos por definir; deben leer imágenes).
-Solo desde el backend, claves en `.env` (nunca en `EXPO_PUBLIC_*`).
-1. **Revisión previa de comprobantes**: extraer monto, fecha, banco, N° de operación y cuenta de destino; alertas
-   (operación repetida, cuenta equivocada, fecha antigua, monto distinto del pedido, no es comprobante).
-   **La IA solo sugiere: la aprobación siempre la hace una persona** (fotos editadas, texto inyectado en la imagen).
-2. **Asistente para clientes en WhatsApp** (y entender pedidos en texto libre, p. ej. "2 de frambuesa"). Solo puede
-   consultar pedidos del número que escribe (tomado de WhatsApp, nunca del texto). Usar un número dedicado.
-3. **Asistente para el dueño en la app** — más adelante.
-- Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo.
+
+- Flujo: el bot registra la foto → `analizarEnSegundoPlano()` (no demora la respuesta al cliente) → la cadena
+  `IA_PROVEEDORES` (p. ej. `nvidia,gemini`) prueba cada proveedor; ante cuota agotada, 429, caída, tiempo límite,
+  falta de configuración o respuesta ilegible pasa al siguiente → `esquema.normalizarRespuesta()` valida → las
+  **reglas sin IA** de `analisis.evaluar()` comparan con el pedido → se guarda la sugerencia.
+- Reglas: monto menor/mayor al total, N° de operación ya usado (solo el comprobante que llegó **después** es
+  sospechoso; el original recibe un aviso), cuenta de destino distinta de los datos de transferencia, fecha
+  antigua (> 3 días), no es comprobante. Sugerencia: `rechazar` (no es comprobante u operación ya usada),
+  `revisar` (cualquier otra alerta) o `aprobar`.
+- **La IA solo sugiere: la aprobación siempre la hace una persona.** Las instrucciones piden ignorar texto
+  escrito dentro de la imagen (las fotos pueden estar editadas o traer instrucciones inyectadas).
+- `IA_PROVEEDORES=simulado` devuelve datos de ejemplo sin claves (para desarrollar la app).
+- **Pendiente:** implementar `servicios/ia/proveedores/nvidia.js` y `gemini.js` (hoy son esqueletos que lanzan
+  `ErrorProveedor`) según la documentación oficial del modelo elegido; claves en `.env`
+  (`NVIDIA_API_KEY`, `NVIDIA_MODELO`, `GEMINI_API_KEY`, `GEMINI_MODELO`), nunca en el código ni en la app.
+- Ideas siguientes: asistente para clientes en WhatsApp (y pedidos en texto libre: "2 de frambuesa"; solo puede
+  consultar pedidos del número que escribe) y asistente para el dueño en la app.
+- Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo; revisar si el proveedor
+  usa los datos para entrenar (sobre todo en planes gratuitos).

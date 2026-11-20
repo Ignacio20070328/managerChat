@@ -3,6 +3,7 @@ const qrcode = require('qrcode-terminal');
 const { ComprobanteInvalidoError, registrarComprobante } = require('./comprobantes');
 const { procesarTexto } = require('./conversacion');
 const mensajes = require('./mensajes');
+const { analizarEnSegundoPlano } = require('../servicios/analisis');
 
 /**
  * Crea el bot de WhatsApp. No se conecta hasta llamar a iniciar().
@@ -54,6 +55,8 @@ function crearBot(db) {
 
             console.log(`Comprobante registrado: pedido #${idPedido} del cliente ${telefono}`);
             await msg.reply(mensajes.comprobanteRecibido(idPedido, total));
+            // Revisión previa con IA (si está configurada); no demora la respuesta al cliente
+            analizarEnSegundoPlano(db, idPedido);
         } catch (error) {
             if (error instanceof ComprobanteInvalidoError) {
                 console.warn('Comprobante rechazado:', error.message);

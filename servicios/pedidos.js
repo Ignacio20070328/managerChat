@@ -24,7 +24,8 @@ async function agregarItems(db, pedidos) {
     );
     const porPedido = new Map(pedidos.map((p) => [p.id_pedido, []]));
     for (const { id_pedido, ...item } of items) porPedido.get(id_pedido).push(item);
-    return pedidos.map((p) => ({ ...p, items: porPedido.get(p.id_pedido) }));
+    const analisis = await require('./analisis').obtenerVarios(db, pedidos.map((p) => p.id_pedido));
+    return pedidos.map((p) => ({ ...p, items: porPedido.get(p.id_pedido), analisis: analisis.get(p.id_pedido) ?? null }));
 }
 
 const COLUMNAS = `p.id_pedido, c.telefono, c.nombre_completo AS nombre_cliente, p.total, p.estado,
