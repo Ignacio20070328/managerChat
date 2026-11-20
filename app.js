@@ -9,7 +9,7 @@ const {
 } = require('./lib/auth');
 const { ErrorApi } = require('./lib/errores');
 const { crearRutas } = require('./rutas');
-const { CARPETA_UPLOADS } = require('./bot/comprobantes');
+const { CARPETA_UPLOADS } = require('./config/carpetas');
 
 /**
  * Construye la aplicación Express sin arrancar nada (ni servidor ni bot),
@@ -19,7 +19,7 @@ const { CARPETA_UPLOADS } = require('./bot/comprobantes');
  * @param bot    { estado(), notificar(telefono, texto) }
  * @param origenesCors  orígenes web con permiso CORS (la app nativa no lo necesita)
  */
-function crearApp({ db, auth, bot, origenesCors = [], carpetaUploads = CARPETA_UPLOADS }) {
+function crearApp({ db, auth, bot, ia, origenesCors = [], carpetaUploads = CARPETA_UPLOADS }) {
     const app = express();
     app.disable('x-powered-by');
 
@@ -48,7 +48,7 @@ function crearApp({ db, auth, bot, origenesCors = [], carpetaUploads = CARPETA_U
 
     // --- Todo lo demás exige sesión ---
     const conSesion = requiereSesion(auth.secreto);
-    app.use('/api', conSesion, crearRutas({ db, bot }));
+    app.use('/api', conSesion, crearRutas({ db, bot, ia }));
     app.use('/uploads', conSesion, express.static(carpetaUploads));
 
     // Ruta de la API (ya autenticada) que no existe

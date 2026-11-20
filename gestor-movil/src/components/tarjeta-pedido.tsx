@@ -8,10 +8,12 @@ import { fechaHora, hace, pesos, telefonoLegible } from '@/lib/formato';
 import type { Pedido } from '@/lib/tipos';
 
 /** Tarjeta de un pedido: cliente, productos, total, comprobante y acciones. */
-export function TarjetaPedido({ pedido, mostrarComprobante = false, fechaDestacada, acciones }: {
+export function TarjetaPedido({ pedido, mostrarComprobante = false, fechaDestacada, analisis, acciones }: {
   pedido: Pedido;
   mostrarComprobante?: boolean;
   fechaDestacada: { etiqueta: string; valor: string | null };
+  /** Panel de revisión con IA (se muestra antes de la foto). */
+  analisis?: ReactNode;
   acciones?: ReactNode;
 }) {
   const { token } = useSesion();
@@ -43,6 +45,8 @@ export function TarjetaPedido({ pedido, mostrarComprobante = false, fechaDestaca
       {pedido.motivo_rechazo ? (
         <Text style={[estilos.texto, { color: COLORES.rojo }]}>Motivo: {pedido.motivo_rechazo}</Text>
       ) : null}
+
+      {analisis}
 
       {mostrarComprobante && pedido.ruta_comprobante && token ? (
         <Image

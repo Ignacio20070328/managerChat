@@ -45,5 +45,9 @@ export function useDatos<T>(ruta: string) {
     }, [cargar])
   );
 
-  return { datos, setDatos, error, cargando, refrescando, recargar: () => cargar(true) };
+  // recargar: muestra el indicador de "deslizar para recargar"; actualizar: en silencio
+  const recargar = useCallback(() => cargar(true), [cargar]);
+  const actualizar = useCallback(() => cargar(false), [cargar]);
+
+  return { datos, setDatos, error, cargando, refrescando, recargar, actualizar };
 }

@@ -13,6 +13,10 @@ const db = require('./config/db');
 const { crearApp } = require('./app');
 const { crearBot } = require('./bot/whatsapp');
 const { prepararCarpeta } = require('./bot/comprobantes');
+const { cadenaDesdeEntorno } = require('./servicios/ia');
+
+// Valida IA_PROVEEDORES al arrancar (un nombre mal escrito detiene el servidor con un mensaje claro)
+cadenaDesdeEntorno();
 
 const puerto = Number(process.env.PORT) || 3000;
 const origenesCors = (process.env.CORS_ORIGINS || '')
@@ -32,6 +36,10 @@ const botApagado = { estado: () => 'desactivado', notificar: async () => false, 
     app.listen(puerto, () => {
         console.log(`Servidor API corriendo en http://localhost:${puerto}`);
         if (botDesactivado) console.log('Bot de WhatsApp DESACTIVADO (BOT_DESACTIVADO=1)');
+        const ia = cadenaDesdeEntorno();
+        console.log(ia.activa
+            ? `IA para revisar comprobantes: ${ia.nombres.join(' → ')}`
+            : 'IA para revisar comprobantes: desactivada (IA_PROVEEDORES vacío)');
     });
 
     bot.iniciar().catch((error) => {

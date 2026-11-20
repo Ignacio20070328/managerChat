@@ -83,3 +83,31 @@ CREATE TABLE IF NOT EXISTS Configuracion (
     valor  VARCHAR(1000)  NOT NULL,
     PRIMARY KEY (clave)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Revisión previa del comprobante hecha por IA (una por pedido; reanalizar la reemplaza).
+-- La IA solo SUGIERE: aprobar o rechazar siempre lo decide una persona.
+CREATE TABLE IF NOT EXISTS AnalisisComprobante (
+    id_pedido           INT UNSIGNED  NOT NULL,
+    estado              ENUM('procesando', 'completado', 'fallido') NOT NULL,
+    proveedor           VARCHAR(30)   NULL,      -- quién respondió (nvidia, gemini, simulado…)
+    modelo              VARCHAR(100)  NULL,
+    -- Datos leídos de la imagen (NULL si no se pudieron leer)
+    es_comprobante      TINYINT(1)    NULL,
+    monto               INT UNSIGNED  NULL,
+    banco_origen        VARCHAR(80)   NULL,
+    banco_destino       VARCHAR(80)   NULL,
+    cuenta_destino      VARCHAR(60)   NULL,
+    titular_destino     VARCHAR(120)  NULL,
+    numero_operacion    VARCHAR(60)   NULL,
+    fecha_transferencia DATETIME      NULL,
+    -- Resultado de las reglas (servicios/analisis.js)
+    alertas             JSON          NULL,      -- [{ tipo, gravedad: 'alta'|'media', mensaje }]
+    sugerencia          ENUM('aprobar', 'revisar', 'rechazar') NULL,
+    error               VARCHAR(255)  NULL,      -- por qué falló (si estado = fallido)
+    fecha_analisis      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id_pedido),
+    -- Para detectar el mismo comprobante enviado en otro pedido
+    KEY idx_analisis_operacion (numero_operacion),
+    CONSTRAINT fk_analisis_pedido FOREIGN KEY (id_pedido)
+        REFERENCES Pedidos (id_pedido) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
