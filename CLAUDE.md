@@ -153,24 +153,34 @@ Pendiente:
 - 16 vulnerabilidades de `npm audit`, todas vía `whatsapp-web.js` → puppeteer. No usar `npm audit fix --force`.
 - Si se cae la sesión de WhatsApp, el bot no se reconecta solo (la app lo muestra en Inicio y Ajustes).
 
-### IA (revisión previa de comprobantes) — estructura lista, proveedores reales pendientes
-Proveedor **externo, NO Claude**: **NVIDIA principal y Gemini de respaldo** (modelos por definir; deben leer imágenes).
+### IA (revisión previa de comprobantes) — NVIDIA NIM activo en MODO DEMO
+Proveedor **externo, NO Claude**. Hoy: **NVIDIA** (`servicios/ia/proveedores/nvidia.js`); Gemini de respaldo pendiente.
 
-- Flujo: el bot registra la foto → `analizarEnSegundoPlano()` (no demora la respuesta al cliente) → la cadena
-  `IA_PROVEEDORES` (p. ej. `nvidia,gemini`) prueba cada proveedor; ante cuota agotada, 429, caída, tiempo límite,
-  falta de configuración o respuesta ilegible pasa al siguiente → `esquema.normalizarRespuesta()` valida → las
-  **reglas sin IA** de `analisis.evaluar()` comparan con el pedido → se guarda la sugerencia.
-- Reglas: monto menor/mayor al total, N° de operación ya usado (solo el comprobante que llegó **después** es
-  sospechoso; el original recibe un aviso), cuenta de destino distinta de los datos de transferencia, fecha
-  antigua (> 3 días), no es comprobante. Sugerencia: `rechazar` (no es comprobante u operación ya usada),
-  `revisar` (cualquier otra alerta) o `aprobar`.
-- **La IA solo sugiere: la aprobación siempre la hace una persona.** Las instrucciones piden ignorar texto
-  escrito dentro de la imagen (las fotos pueden estar editadas o traer instrucciones inyectadas).
-- `IA_PROVEEDORES=simulado` devuelve datos de ejemplo sin claves (para desarrollar la app).
-- **Pendiente:** implementar `servicios/ia/proveedores/nvidia.js` y `gemini.js` (hoy son esqueletos que lanzan
-  `ErrorProveedor`) según la documentación oficial del modelo elegido; claves en `.env`
-  (`NVIDIA_API_KEY`, `NVIDIA_MODELO`, `GEMINI_API_KEY`, `GEMINI_MODELO`), nunca en el código ni en la app.
-- Ideas siguientes: asistente para clientes en WhatsApp (y pedidos en texto libre: "2 de frambuesa"; solo puede
-  consultar pedidos del número que escribe) y asistente para el dueño en la app.
-- Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo; revisar si el proveedor
-  usa los datos para entrenar (sobre todo en planes gratuitos).
+- Modelo: **`nvidia/nemotron-3.5-super-vl-120b-a12b`** vía `https://integrate.api.nvidia.com/v1/chat/completions`
+  (compatible con OpenAI). Verificado el 2026-11-20: acepta la imagen como data URI base64, respeta
+  `response_format: json_schema` (estricto, `esquema.ESQUEMA_JSON`), `reasoning_effort: "none"`, ~2-3 s por
+  comprobante (~12 s en frío), no obedece instrucciones escritas en la imagen, detecta otras monedas.
+  **`nemotron-3.5-parse` NO sirve**: es solo OCR, usa otro endpoint (multipart) y no acepta instrucciones ni JSON.
+- ⚠️ **Términos de la clave gratuita (NVIDIA API Trial Terms §1.2, 2.6a, 3.3, 4.3)**: prohíben enviar datos personales
+  o financieros, no permiten producción y NVIDIA puede usar lo enviado para mejorar sus modelos. Por eso
+  **`IA_SOLO_DEMO=1`**: solo se envían comprobantes de clientes de ejemplo (`config/demo.js`, prefijo `5690000`);
+  los reales responden 409 sin llamar a la IA. Para clientes reales hace falta un plan/proveedor con términos de
+  producción que no entrene con los datos. **No quitar `IA_SOLO_DEMO` con la clave de prueba.**
+- Flujo: el bot registra la foto → `analizarEnSegundoPlano()` la pone en una **cola** (máx. `IA_MAX_SIMULTANEOS`, 2)
+  y vuelve de inmediato → la cadena `IA_PROVEEDORES` intenta cada proveedor con **tiempo límite que cancela la
+  petición** (`IA_TIEMPO_LIMITE_MS`) y **reintentos** ante 429/5xx/red (`IA_REINTENTOS`, 1; respeta `Retry-After`;
+  si no, 2 s, 4 s… máx. 8 s); si falla, pasa al siguiente → `normalizarRespuesta()` valida → las **reglas sin IA**
+  (`analisis.evaluar`) generan las alertas → se guarda la sugerencia. Al arrancar, `recuperarPendientes()` reencola
+  los análisis que quedaron «procesando».
+- **La IA es solo consultiva**: `servicios/analisis.js` solo escribe en `AnalisisComprobante`, nunca en `Pedidos.estado`.
+- Reglas: monto menor/mayor/ilegible, sin pedido previo, **moneda distinta de CLP**, cuenta distinta/ilegible,
+  **titular distinto**, N° de operación ya usado antes (el original solo recibe aviso), fecha antigua/futura,
+  **datos incompletos** (sin N° de operación o fecha), no es comprobante. Sugerencia: `rechazar` (no es comprobante
+  u operación ya usada), `revisar` (otra alerta) o `aprobar`.
+- **Seguridad de la clave**: solo en `.env` (nunca en `.env.example`, la app ni `EXPO_PUBLIC_*`). Los errores pasan
+  por `ocultarSecretos()` (`servicios/ia/errores.js`); nunca se registran cabeceras, cuerpo de la petición ni la imagen.
+- `IA_PROVEEDORES=simulado` devuelve datos de ejemplo sin claves. `db/migraciones/` tiene los `ALTER TABLE` para
+  bases ya creadas (columna `moneda`).
+- Ideas siguientes: Gemini de respaldo (verificar sus términos: el plan gratuito probablemente tiene la misma
+  restricción), asistente de WhatsApp, asistente para el dueño.
+- Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo (cuando se use con reales).

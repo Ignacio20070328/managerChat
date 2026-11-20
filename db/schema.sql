@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS AnalisisComprobante (
     -- Datos leídos de la imagen (NULL si no se pudieron leer)
     es_comprobante      TINYINT(1)    NULL,
     monto               INT UNSIGNED  NULL,
+    moneda              CHAR(3)       NULL,      -- código ISO (CLP, USD…) si se identificó
     banco_origen        VARCHAR(80)   NULL,
     banco_destino       VARCHAR(80)   NULL,
     cuenta_destino      VARCHAR(60)   NULL,

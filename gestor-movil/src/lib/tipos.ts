@@ -39,6 +39,7 @@ export interface Analisis {
   modelo: string | null;
   es_comprobante: boolean | null;
   monto: number | null;
+  moneda: string | null; // código ISO (CLP, USD…) si se identificó
   banco_origen: string | null;
   banco_destino: string | null;
   cuenta_destino: string | null;
@@ -81,5 +82,5 @@ export interface Resumen {
   ventasSemana: { pedidos: number; monto: number };
   productosUltimos30Dias: { nombre: string; unidades: number; monto: number }[];
   bot: EstadoBot;
-  ia: { activa: boolean; proveedores: string[] };
+  ia: { activa: boolean; proveedores: string[]; soloDemo: boolean };
 }

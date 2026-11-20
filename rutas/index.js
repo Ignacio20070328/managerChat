@@ -73,7 +73,7 @@ function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
 
     // --- Inicio / Estadísticas ---
     r.get('/resumen', async (req, res) => {
-        res.json({ ...(await resumen.obtener(db)), bot: bot.estado(), ia: { activa: ia.activa, proveedores: ia.nombres } });
+        res.json({ ...(await resumen.obtener(db)), bot: bot.estado(), ia: { activa: ia.activa, proveedores: ia.nombres, soloDemo: process.env.IA_SOLO_DEMO === '1' } });
     });
 
     return r;

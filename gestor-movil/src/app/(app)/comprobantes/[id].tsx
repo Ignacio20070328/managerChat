@@ -161,7 +161,13 @@ function AvisoSugerencia({ pedido }: { pedido: Pedido }) {
 
 function Comparacion({ pedido, analisis: a }: { pedido: Pedido; analisis: Analisis }) {
   const filas = [
-    { dato: 'Monto', esperado: pedido.total ? pesos(pedido.total) : '—', leido: a.monto != null ? pesos(a.monto) : null, estado: estadoFila(a, 'monto', a.monto) },
+    {
+      dato: 'Monto',
+      esperado: pedido.total ? pesos(pedido.total) : '—',
+      // Si la moneda no es CLP se muestra el número con su código, no con formato de pesos
+      leido: a.monto == null ? null : a.moneda && a.moneda !== 'CLP' ? `${a.monto.toLocaleString('es-CL')} ${a.moneda}` : pesos(a.monto),
+      estado: estadoFila(a, 'monto', a.monto),
+    },
     { dato: 'Cuenta destino', esperado: 'la tuya', leido: a.cuenta_destino, estado: estadoFila(a, 'cuenta', a.cuenta_destino) },
     { dato: 'Fecha', esperado: fechaHora(pedido.fecha_comprobante), leido: a.fecha_transferencia ? fechaHora(a.fecha_transferencia) : null, estado: estadoFila(a, 'fecha', a.fecha_transferencia) },
     { dato: 'N° operación', esperado: 'no repetido', leido: a.numero_operacion, estado: estadoFila(a, 'operacion', a.numero_operacion) },

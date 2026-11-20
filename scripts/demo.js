@@ -19,7 +19,7 @@ const { crearCadena } = require('../servicios/ia');
 const { registrarComprobante, prepararCarpeta } = require('../bot/comprobantes');
 const { CARPETA_UPLOADS } = require('../config/carpetas');
 
-const PREFIJO_DEMO = '5690000';
+const { PREFIJO_DEMO } = require('../config/demo');
 const MARCA_PRODUCTO = '(ejemplo)';
 const tel = (n) => `${PREFIJO_DEMO}${String(n).padStart(4, '0')}`;
 const haceMinutos = (m) => new Date(Date.now() - m * 60_000);
