@@ -28,7 +28,12 @@ function crearApp({ db, auth, bot, ia, origenesCors = [], carpetaUploads = CARPE
     }
     app.use(express.json({ limit: '10kb' }));
 
-    // --- Ruta pública: login ---
+    // --- Rutas públicas ---
+    // Página de verificación: abrir http://<IP>:3000 en el navegador confirma que el servidor responde
+    app.get('/', (req, res) => {
+        res.type('text').send('✅ Servidor de TerryChat funcionando. Abre la app para usarlo.');
+    });
+
     const limitador = crearLimitadorDeIntentos();
     app.post('/api/login', (req, res) => {
         const ip = req.ip;
