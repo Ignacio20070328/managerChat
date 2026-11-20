@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
-import { View, Text, FlatList, Image, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { View, Text, FlatList, Image, StyleSheet, TouchableOpacity, Modal, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+
+import { PantallaLogin } from '@/components/pantalla-login';
+import { apiFetch, imagenProtegida, SesionExpiradaError } from '@/lib/api';
+import { borrarToken, guardarToken, leerToken } from '@/lib/sesion';
 
 interface Pedido {
   id_pedido: number;
@@ -10,22 +14,63 @@ interface Pedido {
 }
 
 export default function Index() {
+  const [token, setToken] = useState<string | null>(null);
+  const [cargandoSesion, setCargandoSesion] = useState(true);
+  const [avisoSesion, setAvisoSesion] = useState<string | null>(null);
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [menuVisible, setMenuVisible] = useState(false); // Estado para abrir/cerrar el menú lateral
-  const [seccionActiva, setSeccionActiva] = useState<'Inicio' |'comprobantes' | 'ventas' | 'grafico' | 'ajustes'>('Inicio'); 
-  
-  const IP_COMPUTADORA = '192.168.1.7'; // REEMPLAZA CON TU IP
+  const [seccionActiva, setSeccionActiva] = useState<'Inicio' |'comprobantes' | 'ventas' | 'grafico' | 'ajustes'>('Inicio');
+
+  // Al abrir la app, recupera la sesión guardada (si existe)
+  useEffect(() => {
+    leerToken()
+      .then(setToken)
+      .catch(() => setToken(null))
+      .finally(() => setCargandoSesion(false));
+  }, []);
+
+  const cerrarSesion = useCallback(async (aviso?: string) => {
+    await borrarToken().catch(() => {});
+    setToken(null);
+    setPedidos([]);
+    setMenuVisible(false);
+    setAvisoSesion(aviso ?? null);
+  }, []);
+
+  const ingresar = async (nuevoToken: string) => {
+    await guardarToken(nuevoToken);
+    setAvisoSesion(null);
+    setToken(nuevoToken);
+  };
 
   useEffect(() => {
-    fetch(`http://${IP_COMPUTADORA}:3000/api/pedidos/pendientes`)
-      .then(res => res.json())
-      .then(data => setPedidos(data))
-      .catch(err => console.error("Error conectando a la API: ", err));
-  }, []);
+    if (!token) return;
+    apiFetch('/api/pedidos/pendientes', token)
+      .then(async res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        setPedidos(await res.json());
+      })
+      .catch(err => {
+        if (err instanceof SesionExpiradaError) cerrarSesion(err.message);
+        else console.error("Error conectando a la API: ", err);
+      });
+  }, [token, cerrarSesion]);
+
+  if (cargandoSesion) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center' }]}>
+        <ActivityIndicator size="large" color="#25D366" />
+      </View>
+    );
+  }
+
+  if (!token) {
+    return <PantallaLogin alIngresar={ingresar} aviso={avisoSesion} />;
+  }
 
   const aprobarPago = async (idPedido: number) => {
     try {
-      const response = await fetch(`http://${IP_COMPUTADORA}:3000/api/pedidos/${idPedido}/aprobar`, {
+      const response = await apiFetch(`/api/pedidos/${idPedido}/aprobar`, token, {
         method: 'PUT',
       });
       if (response.ok) {
@@ -40,6 +85,10 @@ export default function Index() {
         alert(data?.error ?? 'No se pudo aprobar el pago');
       }
     } catch (error) {
+      if (error instanceof SesionExpiradaError) {
+        cerrarSesion(error.message);
+        return;
+      }
       console.error("Error al aprobar el pago: ", error);
       alert('Hubo un error al aprobar el pago');
     }
@@ -171,7 +220,7 @@ export default function Index() {
             <View style={styles.pedidoCard}>
               <Text style={styles.phone}>Cliente: +{item.telefono}</Text>
               <Image 
-                source={{ uri: `http://${IP_COMPUTADORA}:3000${item.ruta_comprobante}` }} 
+                source={imagenProtegida(item.ruta_comprobante, token)}
                 style={styles.image} 
                 resizeMode="contain"
               />
@@ -210,6 +259,10 @@ export default function Index() {
             <Text style={styles.cardTitle}>Versión del MVP</Text>
             <Text style={styles.cardText}>v1.0.0 - Universidad Católica de Temuco</Text>
           </View>
+          <TouchableOpacity style={styles.btnCerrarSesion} onPress={() => cerrarSesion()}>
+            <Ionicons name="log-out-outline" size={20} color="#b42318" />
+            <Text style={styles.btnCerrarSesionTexto}>Cerrar sesión</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -254,6 +307,9 @@ const styles = StyleSheet.create({
   chartMockup: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', height: 140, marginTop: 15, paddingHorizontal: 10 },
   bar: { width: 40, backgroundColor: '#dcdde1', borderRadius: 6 },
   chartLabel: { textAlign: 'center', color: '#888', marginTop: 15, fontSize: 12 },
+
+  btnCerrarSesion: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: '#fdecea', padding: 14, borderRadius: 12, marginTop: 20 },
+  btnCerrarSesionTexto: { color: '#b42318', fontWeight: 'bold', fontSize: 15 },
 
   pedidoCard: { backgroundColor: 'white', marginHorizontal: 20, padding: 15, borderRadius: 16, marginBottom: 20, elevation: 3 },
   phone: { fontSize: 16, fontWeight: 'bold', marginBottom: 12, color: '#333' },
