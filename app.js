@@ -1,4 +1,7 @@
-require('dotenv').config();
+const path = require('path');
+
+// Ruta absoluta: encuentra el .env aunque el servidor se arranque desde otra carpeta
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
 const cors = require('cors');
@@ -10,7 +13,8 @@ const port = Number(process.env.PORT) || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static('public/uploads')); 
+// Ruta absoluta: funciona aunque el servidor se arranque desde otra carpeta
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 
 app.get('/api/pedidos/pendientes', async (req, res) => {
     try {
