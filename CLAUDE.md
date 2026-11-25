@@ -216,11 +216,19 @@ Proveedor **externo, NO Claude**. Hoy: **NVIDIA** (`servicios/ia/proveedores/nvi
   Tiende a deducir datos que no tiene y a "contar" mal la lista: por eso reglas estrictas + códigos escritos por el
   servidor + dos **controles sin IA** que descartan la respuesta (y envían `asistenteDatoNoVerificado`): montos que no
   existen en el catálogo/pedidos/configuración y códigos `NxM` que apuntan a otro producto.
-- No puede cambiar nada (no crea pedidos en la etapa 1, no aprueba, no descuenta). Apagado por defecto
+- No puede cambiar nada por sí sola (no aprueba, no descuenta; los pedidos solo se crean con el «sí» del cliente). Apagado por defecto
   (`asistente_activo`); con `IA_SOLO_DEMO=1` solo atiende clientes de ejemplo. Límite de 8 mensajes por minuto por
   cliente; historial de 3 intercambios **solo en memoria** (30 min). Si el dueño escribe a mano en un chat
   (`message_create` propio que no registró `responder()`/`notificar()` del bot), se calla ahí 30 minutos.
 - Requiere un **número de WhatsApp dedicado** al negocio (con uno personal respondería a todos los contactos).
 - Prueba con la IA real: `node pruebas/manual/asistente-real.js` (cliente de ejemplo, no cambia la base).
-- Etapa 2 (pendiente): pedidos en lenguaje natural con confirmación. Etapa 3: conversaciones "requiere atención" en la app.
+- **Etapa 2 (hecha): pedidos en lenguaje natural con confirmación.** La IA solo devuelve `pedido_items`
+  (número, nombre, cantidad). El servidor (`validarPedido`) identifica el producto **por nombre** contra todo el
+  catálogo (el número solo desempata), lee la cantidad del **texto del cliente** cuando la hay (`cantidadEnTexto`),
+  decide si es pedido nuevo, agregar o quitar por las palabras del cliente (`tipoDePedido`, sin IA), calcula el
+  total y escribe `mensajes.confirmarPedido` (avisa si reemplaza el pedido por pagar). La propuesta vive en memoria
+  10 minutos; `manejarConfirmacion` (sin IA) crea el pedido solo ante un «sí» y cancela ante un «no». Un pedido
+  directo `NxM` o la intervención del dueño descartan la propuesta. Si la IA dice que "muestra el catálogo", se
+  envía el catálogo real.
+- Etapa 3 (pendiente): conversaciones "requiere atención" en la app.
 - Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo (cuando se use con reales).
