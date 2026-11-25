@@ -70,6 +70,11 @@ export interface Configuracion {
   datos_transferencia: string;
   color_marca: string;
   colores_disponibles: ColorMarca[];
+  // Asistente de IA en WhatsApp
+  asistente_activo: 'si' | 'no';
+  direccion_retiro: string;
+  horario_atencion: string;
+  preguntas_frecuentes: string;
 }
 
 export type EstadoBot = 'iniciando' | 'esperando_qr' | 'conectado' | 'desconectado' | 'error_autenticacion' | 'desactivado';
@@ -82,5 +87,5 @@ export interface Resumen {
   ventasSemana: { pedidos: number; monto: number };
   productosUltimos30Dias: { nombre: string; unidades: number; monto: number }[];
   bot: EstadoBot;
-  ia: { activa: boolean; proveedores: string[]; soloDemo: boolean };
+  ia: { activa: boolean; proveedores: string[]; soloDemo: boolean; puedeConversar: boolean };
 }
