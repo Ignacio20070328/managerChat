@@ -55,6 +55,7 @@ export default function Estadisticas() {
                   ['Por entregar', datos.porEstado.Aprobado],
                   ['Entregados', datos.porEstado.Entregado],
                   ['Rechazados', datos.porEstado.Rechazado],
+                  ['Cancelados', datos.porEstado.Cancelado ?? 0],
                 ] as const).map(([nombre, cantidad]) => (
                   <View key={nombre} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 }}>
                     <T estilo={{ fontSize: 14 }}>{nombre}</T>

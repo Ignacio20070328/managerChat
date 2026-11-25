@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AvisoCancelacion } from '@/components/tarjeta-pedido';
 import { ModalRechazo } from '@/components/modal-rechazo';
 import { Boton, COLORES, Encabezado, EstadoCarga, Insignia, Pantalla, T, Tarjeta } from '@/components/ui';
 import { useAccionesPedido } from '@/hooks/use-acciones-pedido';
@@ -16,6 +17,7 @@ import type { Analisis, Pedido, Resumen } from '@/lib/tipos';
 
 const NOMBRE_ESTADO: Record<Pedido['estado'], string> = {
   PorPagar: 'Esperando pago', Pendiente: 'Por revisar', Aprobado: 'Aprobado', Rechazado: 'Rechazado', Entregado: 'Entregado',
+  Cancelado: 'Cancelado',
 };
 
 /** Revisión de un comprobante: lo que se pidió frente a lo que dice la foto. */
@@ -24,7 +26,7 @@ export default function DetalleComprobante() {
   const { token, api } = useSesion();
   const { datos: pedido, setDatos, error, cargando, refrescando, recargar } = useDatos<Pedido>(`/pedidos/${id}`);
   const resumen = useDatos<Resumen>('/resumen');
-  const { aprobar, rechazar, procesando } = useAccionesPedido();
+  const { aprobar, rechazar, cancelar, mantener, procesando } = useAccionesPedido();
   const { bottom } = useSafeAreaInsets();
   const [fotoGrande, setFotoGrande] = useState(false);
   const [rechazando, setRechazando] = useState(false);
@@ -64,6 +66,19 @@ export default function DetalleComprobante() {
                 <Tarjeta estilo={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Ionicons name="information-circle" size={22} color={COLORES.textoSuave} />
                   <T variante="semi" estilo={{ flex: 1 }}>Este pedido ya no está por revisar: está «{NOMBRE_ESTADO[pedido.estado]}».</T>
+                </Tarjeta>
+              ) : null}
+
+              {pendiente && pedido.cancelacion_solicitada ? (
+                <Tarjeta estilo={{ gap: 10 }}>
+                  <AvisoCancelacion pedido={pedido} />
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <Boton texto="Seguir con él" tipo="secundario" estilo={{ flex: 1 }} desactivado={procesando !== null}
+                      alPresionar={async () => { if (await mantener(pedido)) recargar(); }} />
+                    <Boton texto="Cancelar pedido" tipo="peligro" icono="ban" estilo={{ flex: 1 }}
+                      cargando={procesando === pedido.id_pedido} desactivado={procesando !== null}
+                      alPresionar={async () => { if (await cancelar(pedido)) router.back(); }} />
+                  </View>
                 </Tarjeta>
               ) : null}
 

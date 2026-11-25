@@ -152,6 +152,8 @@ function crearBot(db) {
 
     client.on('message', async (msg) => {
         if (!esChatIndividual(msg)) return;
+        // Sin el contenido: solo de quién y de qué tipo (para diagnosticar sin guardar conversaciones)
+        console.log(`Mensaje recibido (${msg.type}) de ${msg.from.replace(/^(\d{4})\d+(\d{2})@/, '$1…$2@')}`);
         if (msg.hasMedia && msg.type === 'image') return manejarComprobante(msg);
         if (msg.type === 'chat') return manejarTexto(msg);
     });

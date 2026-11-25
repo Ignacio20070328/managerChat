@@ -19,8 +19,13 @@ function ultimosDias(n, ahora = new Date(), zona = ZONA_HORARIA) {
 
 async function obtener(db, ahora = new Date()) {
     const [conteos] = await db.query('SELECT estado, COUNT(*) AS cantidad FROM Pedidos GROUP BY estado');
-    const porEstado = { PorPagar: 0, Pendiente: 0, Aprobado: 0, Rechazado: 0, Entregado: 0 };
+    const porEstado = { PorPagar: 0, Pendiente: 0, Aprobado: 0, Rechazado: 0, Entregado: 0, Cancelado: 0 };
     for (const { estado, cantidad } of conteos) porEstado[estado] = Number(cantidad);
+    // Pedidos ya pagados cuyo cliente pidió cancelar (esperan la decisión del dueño)
+    const [[{ cancelaciones }]] = await db.query(
+        `SELECT COUNT(*) AS cancelaciones FROM Pedidos
+         WHERE cancelacion_solicitada IS NOT NULL AND estado IN ('Pendiente', 'Aprobado')`
+    );
 
     // Se trae un día extra para cubrir la diferencia entre UTC y la hora local
     const desde = new Date(ahora.getTime() - (DIAS_GRAFICO + 1) * 86_400_000);
@@ -63,6 +68,7 @@ async function obtener(db, ahora = new Date()) {
 
     return {
         porEstado,
+        cancelacionesSolicitadas: Number(cancelaciones),
         pendientesPorSugerencia,
         productosActivos: Number(activos),
         ventasPorDia,

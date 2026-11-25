@@ -100,10 +100,34 @@ module.exports = {
             Pendiente: 'tiene el comprobante recibido y estamos revisando el pago.',
             Aprobado: 'tiene el pago aprobado y está listo para retirar. 🎉',
             Rechazado: `fue rechazado. Motivo: ${pedido.motivo_rechazo}`,
-            Entregado: 'ya fue entregado. ¡Gracias por tu compra! 💚'
+            Entregado: 'ya fue entregado. ¡Gracias por tu compra! 💚',
+            Cancelado: 'fue cancelado.'
         };
-        return `📦 Tu pedido #${pedido.id_pedido}${total} ${textos[pedido.estado]}`;
+        const solicitud = pedido.cancelacion_solicitada && ['Pendiente', 'Aprobado'].includes(pedido.estado)
+            ? '\n📩 Pediste cancelarlo: el dueño te contactará por aquí.' : '';
+        return `📦 Tu pedido #${pedido.id_pedido}${total} ${textos[pedido.estado]}${solicitud}`;
     },
+
+    // Cancelaciones
+    confirmarCancelacion(pedido) {
+        return `🗑️ ¿Seguro que quieres cancelar tu pedido #${pedido.id_pedido}?\n${lineasItems(pedido.items)}\n\n` +
+            `*Total: ${pesos(pedido.total)}*\n\nResponde *sí* para cancelarlo o *no* para mantenerlo.`;
+    },
+    pedidoCanceladoPorCliente: (pedido) =>
+        `✅ Listo, cancelamos tu pedido #${pedido.id_pedido}. No tienes que pagar nada.\nSi quieres pedir otra cosa, escribe *menu*.`,
+    cancelacionDescartada: (idPedido) => `👍 Perfecto, tu pedido #${idPedido} sigue activo.`,
+    cancelacionSolicitada: (pedido) =>
+        `Tu pedido #${pedido.id_pedido} ya tiene el pago enviado, así que no puedo cancelarlo automáticamente.\n\n` +
+        '📩 Le avisamos al dueño: te contactará por aquí para coordinar la cancelación y la devolución de tu dinero.',
+    sinPedidoParaCancelar: 'No tienes un pedido activo para cancelar. Escribe *estado* para ver tu último pedido.',
+    noSePudoCancelar: (pedido) => `Tu pedido #${pedido.id_pedido} cambió de estado y ya no se puede cancelar desde aquí. ` +
+        'Escribe *estado* para verlo; si necesitas ayuda, el dueño te responderá por aquí.',
+    // Avisos del dueño (desde la app)
+    pedidoCanceladoPorDueno: (pedido) => pedido.ruta_comprobante
+        ? `❌ Tu pedido #${pedido.id_pedido} fue *cancelado*. El dueño te contactará por aquí para la devolución de tu pago.`
+        : `❌ Tu pedido #${pedido.id_pedido} fue *cancelado*. Si quieres pedir otra cosa, escribe *menu*.`,
+    cancelacionNoAceptada: (pedido) =>
+        `ℹ️ El dueño revisó tu solicitud: tu pedido #${pedido.id_pedido} *sigue activo*. Si tienes dudas, escríbele por aquí.`,
 
     // Asistente de IA (servicios/asistente.js)
     asistenteNoDisponible: 'En este momento no puedo responder tu consulta 🙏. Puedes escribir *menu* para ver los productos ' +
@@ -126,5 +150,6 @@ module.exports = {
     ayuda: '👋 Hola. Así puedes comprar:\n1️⃣ Escribe *menu* para ver los productos\n' +
         '2️⃣ Pide escribiendo el producto y la cantidad (por ejemplo *2 de …*) o el código (*1x2*)\n' +
         '3️⃣ Transfiere el total y envía la *foto del comprobante* con la palabra *comprobante*\n' +
-        '• *estado* — ver cómo va tu pedido'
+        '• *estado* — ver cómo va tu pedido\n' +
+        '• *cancelar* — cancelar tu pedido'
 };

@@ -48,7 +48,9 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 - **Productos**: `nombre` UNIQUE, `precio`, `activo` (no se borran; se desactivan).
 - **Pedidos**: `total` (NULL si llegó un comprobante sin pedido previo), `estado`, `motivo_rechazo` y una fecha por
   etapa. Ciclo: `PorPagar` (pidió por el bot) → `Pendiente` (llegó comprobante) → `Aprobado` | `Rechazado`
-  → `Entregado`. Máximo un `PorPagar` por cliente (un pedido nuevo lo reemplaza).
+  → `Entregado`, o `Cancelado` (`cancelado_por` cliente/dueño, `fecha_cancelacion`). Máximo un `PorPagar` por
+  cliente (un pedido nuevo lo reemplaza). `cancelacion_solicitada`: el cliente pidió cancelar un pedido ya pagado
+  (`Pendiente`/`Aprobado`); el dueño decide en la app (cancelar y devolver el dinero por fuera, o mantenerlo).
 - **DetallePedido**: copia `precio_unitario` al pedir (cambiar el catálogo no altera pedidos antiguos).
 - **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`, `color_marca`, `asistente_activo` si/no,
   `direccion_retiro`, `horario_atencion`, `preguntas_frecuentes`). `color_marca` solo acepta
@@ -64,6 +66,8 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | GET | `/api/pedidos?estado=` | Lista por estado con `items`. Lo que espera acción, más antiguo primero; historial (máx. 100), más reciente primero. |
 | GET | `/api/pedidos/:id` | Un pedido con `items`. |
 | PUT | `/api/pedidos/:id/aprobar` · `/rechazar` `{ motivo }` · `/entregar` | Transiciones atómicas (409 si el estado no corresponde). Aprobar y rechazar avisan al cliente y devuelven `notificado`. |
+| PUT | `/api/pedidos/:id/cancelar` · `/mantener` | El dueño cancela (PorPagar/Pendiente/Aprobado) o mantiene un pedido cuya cancelación pidió el cliente. Avisan al cliente. |
+| GET | `/api/pedidos?cancelacion=solicitada` | Pedidos pagados cuyo cliente pidió cancelar (`/resumen` trae `cancelacionesSolicitadas`). |
 | POST | `/api/pedidos/:id/analizar` | Reanaliza el comprobante con IA y espera el resultado. 409 si la IA está desactivada o no hay comprobante. Cada pedido de las listas trae `analisis`. |
 | GET/POST/PUT | `/api/productos`, `/api/productos/:id` | Catálogo (activos primero, luego por nombre: ese orden numera el menú del bot). |
 | GET/PUT | `/api/configuracion` | Nombre del negocio, datos de transferencia y color de marca (+ `colores_disponibles`). |
@@ -72,7 +76,9 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 
 ### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
 - Comandos: `menu`/`catalogo`/`productos`/`precios`/`pedir`/`comprar` → catálogo numerado; `1x2, 2x1` → crea el
-  pedido y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante".
+  pedido y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante"; `cancelar` / "cancelar mi pedido" / "ya no
+  quiero mi pedido" → sin pagar: pide «sí» y lo cancela; pagado: marca `cancelacion_solicitada` y avisa que el dueño
+  lo contactará. Las respuestas «sí»/«no» a una propuesta o cancelación se atienden antes que los comandos.
 - Todo lo demás lo responde el **asistente, solo si el dueño lo activó** en Ajustes (apagado por defecto). Con
   el asistente apagado el bot **no responde conversaciones normales** (el número puede ser personal).
   Activo: la IA si se puede usar con ese cliente; si no (sin IA, modo demo con cliente real o la IA falla), el
