@@ -21,7 +21,13 @@ const COMANDOS = {
 
 // "1x2", "1 x 2", "1*2", "1×2" separados por coma, punto y coma, "y" o saltos de línea
 const ITEM = /(\d{1,3})\s*[x×*]\s*(\d{1,3})/g;
-const SOLO_ITEMS = /^\s*\d{1,3}\s*[x×*]\s*\d{1,3}(\s*(,|;|\by\b|\n)?\s*\d{1,3}\s*[x×*]\s*\d{1,3})*\s*[.!]?\s*$/i;
+const SOLO_ITEMS = /^\s*\d{1,3}\s*[x×*]\s*\d{1,3}(\s*(,|;|\by\b|\n)?\s*\d{1,3}\s*[x×*]\s*\d{1,3})*\s*[.,;!]?\s*$/i;
+
+/**
+ * Quita el formato de WhatsApp que el cliente copia del menú: "*1x2*" (negrita), "_1x2_", "~1x2~".
+ * Conserva el "*" entre dos números porque "1*2" también sirve para pedir.
+ */
+const sinFormato = (texto) => (texto || '').replace(/[_~]/g, '').replace(/(?<!\d\s*)\*|\*(?!\s*\d)/g, '');
 
 function normalizar(texto) {
     return quitarTildes((texto || '').toLowerCase()).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -37,7 +43,8 @@ function detectarComando(texto) {
 
 /** "1x2, 2x1" → [{ numero: 1, cantidad: 2 }, { numero: 2, cantidad: 1 }] o null si no es un pedido. */
 function parsearItems(texto) {
-    if (!SOLO_ITEMS.test(texto || '')) return null;
+    texto = sinFormato(texto);
+    if (!SOLO_ITEMS.test(texto)) return null;
     return [...texto.matchAll(ITEM)].map((m) => ({ numero: Number(m[1]), cantidad: Number(m[2]) }));
 }
 
