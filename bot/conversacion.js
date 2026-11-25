@@ -102,4 +102,10 @@ async function procesarTexto(db, telefono, texto, { asistente = asistenteServici
     }
 }
 
-module.exports = { detectarComando, parsearItems, procesarTexto };
+/** Respuesta cuando llega un comprobante pero el cliente no tiene pedido: el catálogo y cómo pedir. */
+async function respuestaComprobanteSinPedido(db) {
+    const [lista, config] = await Promise.all([productos.listar(db, { soloActivos: true }), configuracion.obtener(db)]);
+    return mensajes.comprobanteSinPedido(lista, config.nombre_negocio);
+}
+
+module.exports = { detectarComando, parsearItems, procesarTexto, respuestaComprobanteSinPedido };

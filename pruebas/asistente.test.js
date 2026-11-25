@@ -61,18 +61,20 @@ test('apagado en Ajustes → no responde y no llama a la IA', async () => {
     assert.equal(ia.llamadas.length, 0);
 });
 
-test('IA_SOLO_DEMO: cliente real → no responde y no se envía nada a la IA', async () => {
+test('IA_SOLO_DEMO: cliente real → bot guiado sin IA (nada se envía a la IA)', async () => {
     const ia = iaFalsa();
-    assert.equal(await responder('hola', { ia, tel: TEL_REAL }), null);
+    assert.match(await responder('hola', { ia, tel: TEL_REAL }), /Te escribe \*Negocio de Prueba\*/);
     assert.equal(ia.llamadas.length, 0);
     process.env.IA_SOLO_DEMO = '0';
     assert.notEqual(await responder('hola', { ia, tel: TEL_REAL }), null);
 });
 
-test('sin proveedor que sepa conversar → no responde', async () => {
+test('sin proveedor que sepa conversar → bot guiado (bienvenida con catálogo)', async () => {
     const cadena = crearCadena([{ nombre: 'solo-imagenes', modelo: () => 'm', analizar: async () => ({}) }]);
     assert.equal(cadena.puedeConversar, false);
-    assert.equal(await asistente.responder(null, TEL_DEMO, 'hola', { cadena, contexto: contexto() }), null);
+    const r = await asistente.responder(null, TEL_DEMO, 'hola', { cadena, contexto: contexto() });
+    assert.match(r, /Mermelada de Frambuesa — \$4\.500/);
+    assert.ok(!r.includes('Producto C'), 'no muestra productos inactivos');
 });
 
 test('mensaje vacío → no responde', async () => {
@@ -123,11 +125,12 @@ test('control de códigos: un código que apunta a otro producto NO se envía', 
     } finally { console.warn = original; }
 });
 
-test('si la IA falla, responde un mensaje de respaldo con los comandos', async () => {
+test('si la IA falla, responde el bot guiado (y entiende pedidos simples igual)', async () => {
     const ia = iaFalsa(new Error('caída'));
     const original = console.error; console.error = () => {};
     try {
-        assert.equal(await responder('hola', { ia }), mensajes.asistenteNoDisponible);
+        assert.match(await responder('hola', { ia }), /Estos son nuestros productos/);
+        assert.match(await responder('quiero 2 de frambuesa', { ia, ahora: Date.now() + 20_000 }), /2 × Mermelada de Frambuesa/);
     } finally { console.error = original; }
 });
 
@@ -321,4 +324,36 @@ test('agregar/quitar: manda el texto del cliente aunque la IA repita el pedido o
         ia: pideTipo('agregar', [{ numero: 2, nombre: 'Producto B', cantidad: 3 }, { numero: 1, nombre: 'frambuesa', cantidad: 2 }])
     });
     assert.match(r, /3 × Producto B/); assert.match(r, /2 × Mermelada de Frambuesa/);
+});
+
+// ---------- Bot guiado (sin IA): clientes reales en modo demo o IA caída ----------
+
+const sinIa = (texto, extra = {}) => responder(texto, { tel: TEL_REAL, ...extra });
+
+test('sin IA: "2 de frambuesa y una B" → confirmación con total calculado por el servidor', async () => {
+    const r = await sinIa('quiero 2 de frambuesa y una de Producto B');
+    assert.match(r, /2 × Mermelada de Frambuesa — \$9\.000/);
+    assert.match(r, /1 × Producto B — \$5\.000/);
+    assert.match(r, /Total: \$14\.000/);
+});
+
+test('sin IA: escribe el número del producto → pregunta cuántos → confirmación', async () => {
+    const ahora = Date.now();
+    assert.match(await sinIa('1', { ahora }), /Cuántas unidades de \*Mermelada de Frambuesa\*/);
+    const r = await sinIa('3', { ahora: ahora + 5000 });
+    assert.match(r, /3 × Mermelada de Frambuesa — \$13\.500/);
+    assert.match(r, /¿Confirmas este pedido\?/);
+});
+
+test('sin IA: mensaje que no entiende → bienvenida la primera vez, ayuda corta después', async () => {
+    const ahora = Date.now();
+    assert.match(await sinIa('hola buenas', { ahora }), /Estos son nuestros productos/);
+    const r = await sinIa('hacen envíos?', { ahora: ahora + 10_000 });
+    assert.match(r, /No entendí tu mensaje/);
+    assert.match(r, /el dueño te responderá/);
+});
+
+test('sin IA: asistente apagado → no responde (el número puede ser personal)', async () => {
+    const ctx = contexto(); ctx.config.asistente_activo = 'no';
+    assert.equal(await sinIa('hola', { ctx }), null);
 });

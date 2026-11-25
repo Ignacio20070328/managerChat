@@ -73,8 +73,15 @@ async function cambiarEstado(db, idPedido, { desde, hacia, columnaFecha, extra =
     return obtener(db, idPedido);
 }
 
-const aprobar = (db, id) =>
-    cambiarEstado(db, id, { desde: 'Pendiente', hacia: 'Aprobado', columnaFecha: 'fecha_aprobacion' });
+async function aprobar(db, id) {
+    // Un pedido sin productos (comprobante que llegó sin pedir, de antes de exigir pedido) no se aprueba:
+    // nadie sabría qué entregar. Se rechaza pidiendo al cliente que haga su pedido.
+    const [filas] = await db.query("SELECT total FROM Pedidos WHERE id_pedido = ? AND estado = 'Pendiente'", [id]);
+    if (filas.length > 0 && filas[0].total == null) {
+        throw conflicto('Este pedido no tiene productos: recházalo y pídele al cliente que haga su pedido por WhatsApp');
+    }
+    return cambiarEstado(db, id, { desde: 'Pendiente', hacia: 'Aprobado', columnaFecha: 'fecha_aprobacion' });
+}
 
 function rechazar(db, id, motivo) {
     const limpio = typeof motivo === 'string' ? motivo.trim() : '';
@@ -169,12 +176,20 @@ async function crearPedidoPorPagar(db, telefono, items) {
     return obtener(db, idPedido);
 }
 
+const DIAS_REENVIO_TRAS_RECHAZO = 7;
+
+/** El cliente envió un comprobante sin tener un pedido por pagar: primero tiene que pedir. */
+class SinPedidoError extends Error {}
+
 /**
- * Asocia un comprobante (ya validado) al pedido PorPagar del cliente, o crea un
- * pedido sin productos si el cliente no había pedido por el bot.
+ * Asocia un comprobante (ya validado) al pedido del cliente:
+ * - su pedido PorPagar, o
+ * - su último pedido Rechazado (de los últimos 7 días): el mensaje de rechazo le pide reenviar el
+ *   comprobante, así que el pedido vuelve a Pendiente con la foto nueva.
+ * Si no tiene ninguno lanza SinPedidoError: nunca se crean pedidos sin productos.
  * Se ejecuta dentro de la transacción que recibe, para que el archivo y la fila
  * se guarden juntos (ver bot/comprobantes.js).
- * @returns {Promise<{ idPedido: number, total: number|null }>}
+ * @returns {Promise<{ idPedido: number, total: number|null, reenvio: boolean }>}
  */
 async function adjuntarComprobante(conexion, telefono, rutaComprobante) {
     const idCliente = await asegurarCliente(conexion, telefono);
@@ -190,14 +205,26 @@ async function adjuntarComprobante(conexion, telefono, rutaComprobante) {
              WHERE id_pedido = ?`,
             [rutaComprobante, abiertos[0].id_pedido]
         );
-        return { idPedido: abiertos[0].id_pedido, total: abiertos[0].total };
+        return { idPedido: abiertos[0].id_pedido, total: abiertos[0].total, reenvio: false };
     }
-    const [r] = await conexion.query(
-        `INSERT INTO Pedidos (id_cliente, ruta_comprobante, estado, fecha_comprobante)
-         VALUES (?, ?, 'Pendiente', NOW())`,
-        [idCliente, rutaComprobante]
+    const [rechazados] = await conexion.query(
+        `SELECT id_pedido, total FROM Pedidos
+         WHERE id_cliente = ? AND estado = 'Rechazado' AND total IS NOT NULL
+           AND fecha_rechazo >= NOW() - INTERVAL ? DAY
+           AND NOT EXISTS (SELECT 1 FROM Pedidos p2 WHERE p2.id_cliente = Pedidos.id_cliente AND p2.fecha > Pedidos.fecha)
+         ORDER BY fecha DESC LIMIT 1 FOR UPDATE`,
+        [idCliente, DIAS_REENVIO_TRAS_RECHAZO]
     );
-    return { idPedido: r.insertId, total: null };
+    if (rechazados.length > 0) {
+        await conexion.query(
+            `UPDATE Pedidos SET estado = 'Pendiente', ruta_comprobante = ?, fecha_comprobante = NOW(),
+                                motivo_rechazo = NULL, fecha_rechazo = NULL
+             WHERE id_pedido = ? AND estado = 'Rechazado'`,
+            [rutaComprobante, rechazados[0].id_pedido]
+        );
+        return { idPedido: rechazados[0].id_pedido, total: rechazados[0].total, reenvio: true };
+    }
+    throw new SinPedidoError('El cliente no tiene un pedido por pagar');
 }
 
 /** Último pedido del cliente (para responder "estado" por WhatsApp). */
@@ -211,6 +238,7 @@ async function ultimoDelCliente(db, telefono) {
 }
 
 module.exports = {
+    SinPedidoError,
     ESTADOS,
     MAX_CANTIDAD_POR_PRODUCTO,
     adjuntarComprobante,

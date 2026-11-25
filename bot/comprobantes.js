@@ -40,7 +40,8 @@ function validarImagen(media) {
  * Registra el comprobante: lo asocia al pedido PorPagar del cliente (o crea un
  * pedido nuevo si no tenía) y guarda la imagen. Todo o nada: si algo falla, no
  * queda ni el cambio en la base ni el archivo en disco.
- * @returns {Promise<{ idPedido: number, total: number|null, ruta: string }>}
+ * @returns {Promise<{ idPedido: number, total: number|null, reenvio: boolean, ruta: string }>}
+ * @throws SinPedidoError (servicios/pedidos) si el cliente no tiene un pedido al cual asociarlo
  */
 async function registrarComprobante(db, telefono, media) {
     const { extension, datos } = validarImagen(media);
@@ -53,10 +54,10 @@ async function registrarComprobante(db, telefono, media) {
     let archivoEscrito = false;
     try {
         return await enTransaccion(db, async (conexion) => {
-            const { idPedido, total } = await adjuntarComprobante(conexion, telefono, rutaPublica);
+            const { idPedido, total, reenvio } = await adjuntarComprobante(conexion, telefono, rutaPublica);
             await fs.writeFile(rutaDisco, datos, { flag: 'wx' });
             archivoEscrito = true;
-            return { idPedido, total, ruta: rutaPublica };
+            return { idPedido, total, reenvio, ruta: rutaPublica };
         });
     } catch (error) {
         // La transacción ya se revirtió; si el archivo alcanzó a escribirse, se borra
