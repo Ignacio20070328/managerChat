@@ -55,6 +55,13 @@ function parsearItems(texto) {
  *                   solo si el dueño lo activó en Ajustes; si no, el bot sigue sin responder conversaciones.
  */
 async function procesarTexto(db, telefono, texto, { asistente = asistenteServicio } = {}) {
+    // ¿Responde "sí" o "no" a un pedido o a una cancelación que el bot le propuso?
+    const confirmacion = await asistente.manejarConfirmacion?.(db, telefono, texto);
+    if (confirmacion) return confirmacion;
+
+    // "cancelar mi pedido" (funciona aunque el asistente esté apagado, como los demás comandos)
+    if (asistente.esPedidoDeCancelar?.(texto)) return asistente.iniciarCancelacion(db, telefono);
+
     const comando = detectarComando(texto);
 
     if (comando === 'menu') {
@@ -73,10 +80,6 @@ async function procesarTexto(db, telefono, texto, { asistente = asistenteServici
     if (comando === 'comprobante') {
         return mensajes.faltaFotoComprobante;
     }
-
-    // ¿Responde "sí" o "no" a un pedido que le propuso el asistente?
-    const confirmacion = await asistente.manejarConfirmacion?.(db, telefono, texto);
-    if (confirmacion) return confirmacion;
 
     const solicitados = parsearItems(texto);
     if (!solicitados) return asistente.responder(db, telefono, texto);

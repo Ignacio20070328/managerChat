@@ -39,12 +39,14 @@ CREATE TABLE IF NOT EXISTS Productos (
 --   Aprobado  → pago validado; falta entregar
 --   Rechazado → comprobante inválido (motivo_rechazo)
 --   Entregado → el cliente retiró su pedido
+--   Cancelado → el cliente canceló antes de pagar, o el dueño lo canceló (cancelado_por)
+-- cancelacion_solicitada: el cliente pidió cancelar un pedido ya pagado; decide el dueño.
 CREATE TABLE IF NOT EXISTS Pedidos (
     id_pedido         INT UNSIGNED  NOT NULL AUTO_INCREMENT,
     id_cliente        INT UNSIGNED  NOT NULL,
     total             INT UNSIGNED  NULL,          -- NULL si llegó un comprobante sin pedido previo
     ruta_comprobante  VARCHAR(255)  NULL,          -- NULL mientras está PorPagar
-    estado            ENUM('PorPagar', 'Pendiente', 'Aprobado', 'Rechazado', 'Entregado')
+    estado            ENUM('PorPagar', 'Pendiente', 'Aprobado', 'Rechazado', 'Entregado', 'Cancelado')
                                     NOT NULL DEFAULT 'Pendiente',
     motivo_rechazo    VARCHAR(255)  NULL,
     fecha             DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,  -- creación del pedido
@@ -52,6 +54,9 @@ CREATE TABLE IF NOT EXISTS Pedidos (
     fecha_aprobacion  DATETIME      NULL,
     fecha_rechazo     DATETIME      NULL,
     fecha_entrega     DATETIME      NULL,
+    fecha_cancelacion DATETIME      NULL,
+    cancelado_por     ENUM('cliente', 'dueno') NULL,
+    cancelacion_solicitada DATETIME NULL,
     PRIMARY KEY (id_pedido),
     -- Las pantallas listan pedidos por estado y fecha
     KEY idx_pedidos_estado_fecha (estado, fecha),
@@ -65,11 +70,12 @@ CREATE TABLE IF NOT EXISTS Pedidos (
         REFERENCES Clientes (id_cliente)
         ON UPDATE CASCADE ON DELETE RESTRICT,
     -- Reglas de cada etapa (también las controla el código; aquí protegen ante errores o ediciones a mano)
-    CONSTRAINT chk_pedidos_comprobante CHECK ((estado = 'PorPagar') = (ruta_comprobante IS NULL)),
+    CONSTRAINT chk_pedidos_comprobante CHECK (estado = 'Cancelado' OR (estado = 'PorPagar') = (ruta_comprobante IS NULL)),
     CONSTRAINT chk_pedidos_total CHECK (total IS NULL OR total > 0),
     CONSTRAINT chk_pedidos_aprobacion CHECK (estado NOT IN ('Aprobado', 'Entregado') OR fecha_aprobacion IS NOT NULL),
     CONSTRAINT chk_pedidos_entrega CHECK (estado <> 'Entregado' OR fecha_entrega IS NOT NULL),
-    CONSTRAINT chk_pedidos_rechazo CHECK (estado <> 'Rechazado' OR (motivo_rechazo IS NOT NULL AND fecha_rechazo IS NOT NULL))
+    CONSTRAINT chk_pedidos_rechazo CHECK (estado <> 'Rechazado' OR (motivo_rechazo IS NOT NULL AND fecha_rechazo IS NOT NULL)),
+    CONSTRAINT chk_pedidos_cancelacion CHECK (estado <> 'Cancelado' OR (fecha_cancelacion IS NOT NULL AND cancelado_por IS NOT NULL))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Productos de cada pedido. El precio se copia al momento de pedir:

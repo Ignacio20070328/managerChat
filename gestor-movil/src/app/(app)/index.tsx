@@ -67,6 +67,22 @@ export default function Inicio() {
 
               <T variante="etiqueta">Para hacer hoy</T>
 
+              {datos.cancelacionesSolicitadas > 0 ? (
+                <TouchableOpacity onPress={() => router.navigate({ pathname: '/ventas', params: { pestana: 'cancelar' } })}
+                  accessibilityRole="button" accessibilityLabel={`${plural(datos.cancelacionesSolicitadas, 'cliente pidió', 'clientes pidieron')} cancelar`}>
+                  <Tarjeta estilo={[s.tareaPrincipal, { borderColor: COLORES.ambar, borderWidth: 2, backgroundColor: COLORES.ambarFondo }]}>
+                    <Ionicons name="warning" size={30} color={COLORES.ambar} />
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <T variante="fuerte" estilo={{ fontSize: 17, color: COLORES.ambar }}>
+                        {datos.cancelacionesSolicitadas === 1 ? 'Un cliente pidió cancelar' : `${datos.cancelacionesSolicitadas} clientes pidieron cancelar`}
+                      </T>
+                      <T variante="suave">Ya pagaron: decide si cancelas (y devuelves el dinero) o sigues con el pedido.</T>
+                    </View>
+                    <Ionicons name="chevron-forward" size={22} color={COLORES.ambar} />
+                  </Tarjeta>
+                </TouchableOpacity>
+              ) : null}
+
               <TouchableOpacity onPress={() => router.navigate('/comprobantes')} accessibilityRole="button"
                 accessibilityLabel={`${plural(datos.porEstado.Pendiente, 'comprobante', 'comprobantes')} por revisar`}>
                 <Tarjeta estilo={[s.tareaPrincipal, datos.porEstado.Pendiente > 0 && { borderColor: acento, borderWidth: 2 }]}>

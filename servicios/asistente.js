@@ -69,6 +69,7 @@ const pausas = new Map();        // telefono → hasta (ms)
 const envios = new Map();        // telefono → [marcas de tiempo de mensajes recibidos]
 const propuestas = new Map();    // telefono → { items, total, vence }: pedido esperando "sí"
 const eligiendo = new Map();     // telefono → { producto, vence }: escribió "2" (un producto) y falta la cantidad
+const cancelaciones = new Map(); // telefono → { id_pedido, vence }: pidió cancelar y falta que confirme
 const saludados = new Map();     // telefono → hasta cuándo no repetir la bienvenida completa
 const MINUTOS_ELIGIENDO = 10;
 const MINUTOS_SIN_REPETIR_BIENVENIDA = 30;
@@ -79,10 +80,11 @@ function pausarPorDueno(telefono, ahora = Date.now()) {
     historiales.delete(telefono); // la conversación ahora la lleva una persona
     propuestas.delete(telefono);
     eligiendo.delete(telefono);
+    cancelaciones.delete(telefono);
 }
 
 /** El cliente hizo un pedido por otra vía (p. ej. "2x2"): la propuesta pendiente ya no aplica. */
-const descartarPropuesta = (telefono) => { propuestas.delete(telefono); eligiendo.delete(telefono); };
+const descartarPropuesta = (telefono) => { propuestas.delete(telefono); eligiendo.delete(telefono); cancelaciones.delete(telefono); };
 
 const estaPausado = (telefono, ahora = Date.now()) => (pausas.get(telefono) ?? 0) > ahora;
 
@@ -108,7 +110,7 @@ function guardarEnHistorial(telefono, pregunta, respuesta, ahora = Date.now()) {
 
 /** Para pruebas: borra todo el estado en memoria. */
 function reiniciarEstado() {
-    historiales.clear(); pausas.clear(); envios.clear(); propuestas.clear(); eligiendo.clear(); saludados.clear();
+    historiales.clear(); pausas.clear(); envios.clear(); propuestas.clear(); eligiendo.clear(); saludados.clear(); cancelaciones.clear();
 }
 
 // ---------- Contexto (lo único que el asistente sabe) ----------
@@ -427,11 +429,78 @@ const normalizarCorto = (texto) => sinTildes(texto).replace(/[^a-z0-9ñ\s]/g, ' 
  * (sin IA). Devuelve el texto a enviar, o null si el mensaje no es una confirmación.
  * @param crearPedido / obtenerConfig  inyectables en pruebas
  */
+// ---------- Cancelar un pedido (sin IA) ----------
+
+// "cancelar", "cancelar mi pedido", "quiero anular el pedido", "ya no quiero mi pedido", "me arrepentí"…
+const PATRON_CANCELAR = new RegExp(
+    '^(quiero |necesito |me gustaria |puedo |deseo )?(cancelar|anular|eliminar|borrar)( (el|mi|este))?( (pedido|compra))?( (por favor|porfa))?$' +
+    '|^(ya )?no quiero (el|mi) pedido$|^me arrepenti( del pedido)?$'
+);
+const esPedidoDeCancelar = (texto) => PATRON_CANCELAR.test(normalizarCorto(texto));
+
+// Respuestas a "¿seguro que quieres cancelar?": aquí "cancelar" significa SÍ
+const SI_CANCELAR = new Set([...AFIRMATIVOS, 'cancelar', 'cancela', 'cancelalo', 'si cancelalo', 'si cancelar', 'si cancela']);
+const NO_CANCELAR = new Set(['no', 'n', 'no gracias', 'mejor no', 'nop', 'mantener', 'mantenlo', 'no cancelar', 'no lo canceles']);
+
+/**
+ * El cliente pidió cancelar su último pedido:
+ * - sin pagar (PorPagar) → pide confirmar con "sí"
+ * - ya pagado (Pendiente o Aprobado) → queda marcado para que el dueño decida en la app
+ */
+async function iniciarCancelacion(db, telefono, {
+    ahora = Date.now(),
+    ultimoDelCliente = pedidosServicio.ultimoDelCliente,
+    solicitar = pedidosServicio.solicitarCancelacion
+} = {}) {
+    const pedido = await ultimoDelCliente(db, telefono);
+    if (!pedido || !['PorPagar', 'Pendiente', 'Aprobado'].includes(pedido.estado)) return mensajes.sinPedidoParaCancelar;
+    propuestas.delete(telefono);
+    eligiendo.delete(telefono);
+    if (pedido.estado === 'PorPagar') {
+        cancelaciones.set(telefono, { id_pedido: pedido.id_pedido, vence: ahora + MINUTOS_PROPUESTA * 60_000 });
+        return mensajes.confirmarCancelacion(pedido);
+    }
+    try {
+        await solicitar(db, telefono, pedido.id_pedido);
+    } catch (error) {
+        if (error?.status === 409) return mensajes.noSePudoCancelar(pedido);
+        throw error;
+    }
+    console.log(`Cancelación solicitada: pedido #${pedido.id_pedido} de ${telefono} (ya pagado); el dueño decide en la app`);
+    return mensajes.cancelacionSolicitada(pedido);
+}
+
+/** Respuesta a "¿seguro que quieres cancelar tu pedido?". null si no es una respuesta a eso. */
+async function confirmarCancelacion(db, telefono, texto, { ahora, cancelar }) {
+    const pendiente = cancelaciones.get(telefono);
+    if (!pendiente) return null;
+    if (pendiente.vence < ahora) { cancelaciones.delete(telefono); return null; }
+    const corto = normalizarCorto(texto);
+    if (NO_CANCELAR.has(corto)) {
+        cancelaciones.delete(telefono);
+        return mensajes.cancelacionDescartada(pendiente.id_pedido);
+    }
+    if (!SI_CANCELAR.has(corto)) return null;
+    cancelaciones.delete(telefono);
+    try {
+        const pedido = await cancelar(db, telefono, pendiente.id_pedido);
+        console.log(`Pedido #${pedido.id_pedido} cancelado por el cliente ${telefono}`);
+        return mensajes.pedidoCanceladoPorCliente(pedido);
+    } catch (error) {
+        if (error?.status === 409) return mensajes.noSePudoCancelar({ id_pedido: pendiente.id_pedido });
+        throw error;
+    }
+}
+
 async function manejarConfirmacion(db, telefono, texto, {
     ahora = Date.now(),
     crearPedido = pedidosServicio.crearPedidoPorPagar,
-    obtenerConfig = configuracion.obtener
+    obtenerConfig = configuracion.obtener,
+    cancelar = pedidosServicio.cancelarPorCliente
 } = {}) {
+    const respuestaCancelacion = await confirmarCancelacion(db, telefono, texto, { ahora, cancelar });
+    if (respuestaCancelacion) return respuestaCancelacion;
+
     const propuesta = propuestas.get(telefono);
     if (!propuesta) return null;
     if (propuesta.vence < ahora) { propuestas.delete(telefono); return null; }
@@ -465,11 +534,18 @@ async function manejarConfirmacion(db, telefono, texto, {
 async function responder(db, telefono, texto, { cadena = cadenaDesdeEntorno(), ahora = Date.now(), contexto: contextoDado } = {}) {
     const pregunta = String(texto || '').trim().slice(0, LARGO_MAXIMO_PREGUNTA);
     if (!pregunta || !telefono) return null;
-    if (estaPausado(telefono, ahora)) return null;
+    if (estaPausado(telefono, ahora)) {
+        const minutos = Math.ceil(((pausas.get(telefono) ?? ahora) - ahora) / 60_000);
+        console.log(`Asistente: no responde a ${telefono} (en pausa ${minutos} min más: el dueño escribió en ese chat)`);
+        return null;
+    }
 
     const contexto = contextoDado ?? await obtenerContexto(db, telefono);
     // Apagado: el bot no responde conversaciones (el número puede ser personal)
-    if (contexto.config.asistente_activo !== 'si') return null;
+    if (contexto.config.asistente_activo !== 'si') {
+        console.log(`Asistente apagado: no responde a ${telefono} (actívalo en Ajustes)`);
+        return null;
+    }
     if (superaLimite(telefono, ahora)) {
         console.warn(`Asistente: ${telefono} superó ${MAX_MENSAJES_POR_MINUTO} mensajes por minuto; se ignora`);
         return null;
@@ -546,6 +622,7 @@ function proponerPedido(telefono, pregunta, items, contexto, ahora) {
         return mensajes.pedidoNoEntendido;
     }
     eligiendo.delete(telefono);
+    cancelaciones.delete(telefono);
     propuestas.set(telefono, { items: validado.items, total: validado.total, vence: ahora + MINUTOS_PROPUESTA * 60_000 });
     const aReemplazar = contexto.pedidos.find((p) => p.estado === 'PorPagar');
     const confirmacion = mensajes.confirmarPedido(validado.items, validado.total, aReemplazar);
@@ -616,6 +693,8 @@ module.exports = {
     ESQUEMA_RESPUESTA,
     codigosIncorrectos,
     descartarPropuesta,
+    esPedidoDeCancelar,
+    iniciarCancelacion,
     cantidadEnTexto,
     manejarConfirmacion,
     tipoDePedido,
