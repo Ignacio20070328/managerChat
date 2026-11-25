@@ -1,6 +1,6 @@
 // Formas de los datos que entrega la API (ver rutas/index.js y servicios/ del backend).
 
-export type EstadoPedido = 'PorPagar' | 'Pendiente' | 'Aprobado' | 'Rechazado' | 'Entregado';
+export type EstadoPedido = 'PorPagar' | 'Pendiente' | 'Aprobado' | 'Rechazado' | 'Entregado' | 'Cancelado';
 
 export interface ItemPedido {
   id_producto: number;
@@ -22,6 +22,9 @@ export interface Pedido {
   fecha_aprobacion: string | null;
   fecha_rechazo: string | null;
   fecha_entrega: string | null;
+  fecha_cancelacion: string | null;
+  cancelado_por: 'cliente' | 'dueno' | null;
+  cancelacion_solicitada: string | null; // el cliente pidió cancelar un pedido ya pagado
   items: ItemPedido[];
   analisis: Analisis | null; // revisión previa con IA (null si no se ha analizado)
 }
@@ -70,17 +73,23 @@ export interface Configuracion {
   datos_transferencia: string;
   color_marca: string;
   colores_disponibles: ColorMarca[];
+  // Asistente de IA en WhatsApp
+  asistente_activo: 'si' | 'no';
+  direccion_retiro: string;
+  horario_atencion: string;
+  preguntas_frecuentes: string;
 }
 
 export type EstadoBot = 'iniciando' | 'esperando_qr' | 'conectado' | 'desconectado' | 'error_autenticacion' | 'desactivado';
 
 export interface Resumen {
   porEstado: Record<EstadoPedido, number>;
+  cancelacionesSolicitadas: number;
   pendientesPorSugerencia: { rechazar: number; revisar: number; aprobar: number; sin_analisis: number };
   productosActivos: number;
   ventasPorDia: { dia: string; pedidos: number; monto: number }[];
   ventasSemana: { pedidos: number; monto: number };
   productosUltimos30Dias: { nombre: string; unidades: number; monto: number }[];
   bot: EstadoBot;
-  ia: { activa: boolean; proveedores: string[]; soloDemo: boolean };
+  ia: { activa: boolean; proveedores: string[]; soloDemo: boolean; puedeConversar: boolean };
 }

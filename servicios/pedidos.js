@@ -1,6 +1,6 @@
 const { conflicto, noEncontrado, validacion } = require('../lib/errores');
 
-const ESTADOS = ['PorPagar', 'Pendiente', 'Aprobado', 'Rechazado', 'Entregado'];
+const ESTADOS = ['PorPagar', 'Pendiente', 'Aprobado', 'Rechazado', 'Entregado', 'Cancelado'];
 const MAX_CANTIDAD_POR_PRODUCTO = 100;
 
 // Orden de cada lista: lo que espera acción, primero lo más antiguo;
@@ -10,7 +10,8 @@ const ORDEN_POR_ESTADO = {
     Pendiente: 'p.fecha_comprobante ASC, p.id_pedido ASC',
     Aprobado: 'p.fecha_aprobacion ASC',
     Rechazado: 'p.fecha_rechazo DESC',
-    Entregado: 'p.fecha_entrega DESC'
+    Entregado: 'p.fecha_entrega DESC',
+    Cancelado: 'p.fecha_cancelacion DESC'
 };
 const LIMITE_HISTORIAL = 100;
 
@@ -30,11 +31,12 @@ async function agregarItems(db, pedidos) {
 
 const COLUMNAS = `p.id_pedido, c.telefono, c.nombre_completo AS nombre_cliente, p.total, p.estado,
     p.ruta_comprobante, p.motivo_rechazo, p.fecha, p.fecha_comprobante,
-    p.fecha_aprobacion, p.fecha_rechazo, p.fecha_entrega`;
+    p.fecha_aprobacion, p.fecha_rechazo, p.fecha_entrega, p.fecha_cancelacion, p.cancelado_por,
+    p.cancelacion_solicitada`;
 
 async function listarPorEstado(db, estado) {
     if (!ESTADOS.includes(estado)) throw validacion(`Estado inválido. Usa: ${ESTADOS.join(', ')}`);
-    const esHistorial = estado === 'Rechazado' || estado === 'Entregado';
+    const esHistorial = ['Rechazado', 'Entregado', 'Cancelado'].includes(estado);
     const [filas] = await db.query(
         `SELECT ${COLUMNAS}
          FROM Pedidos p JOIN Clientes c ON c.id_cliente = p.id_cliente
@@ -42,6 +44,17 @@ async function listarPorEstado(db, estado) {
          ORDER BY ${ORDEN_POR_ESTADO[estado]}
          ${esHistorial ? `LIMIT ${LIMITE_HISTORIAL}` : ''}`,
         [estado]
+    );
+    return agregarItems(db, filas);
+}
+
+/** Pedidos ya pagados cuyo cliente pidió cancelar: esperan la decisión del dueño (más antiguo primero). */
+async function listarCancelacionesSolicitadas(db) {
+    const [filas] = await db.query(
+        `SELECT ${COLUMNAS}
+         FROM Pedidos p JOIN Clientes c ON c.id_cliente = p.id_cliente
+         WHERE p.cancelacion_solicitada IS NOT NULL AND p.estado IN ('Pendiente', 'Aprobado')
+         ORDER BY p.cancelacion_solicitada ASC`
     );
     return agregarItems(db, filas);
 }
@@ -73,8 +86,15 @@ async function cambiarEstado(db, idPedido, { desde, hacia, columnaFecha, extra =
     return obtener(db, idPedido);
 }
 
-const aprobar = (db, id) =>
-    cambiarEstado(db, id, { desde: 'Pendiente', hacia: 'Aprobado', columnaFecha: 'fecha_aprobacion' });
+async function aprobar(db, id) {
+    // Un pedido sin productos (comprobante que llegó sin pedir, de antes de exigir pedido) no se aprueba:
+    // nadie sabría qué entregar. Se rechaza pidiendo al cliente que haga su pedido.
+    const [filas] = await db.query("SELECT total FROM Pedidos WHERE id_pedido = ? AND estado = 'Pendiente'", [id]);
+    if (filas.length > 0 && filas[0].total == null) {
+        throw conflicto('Este pedido no tiene productos: recházalo y pídele al cliente que haga su pedido por WhatsApp');
+    }
+    return cambiarEstado(db, id, { desde: 'Pendiente', hacia: 'Aprobado', columnaFecha: 'fecha_aprobacion' });
+}
 
 function rechazar(db, id, motivo) {
     const limpio = typeof motivo === 'string' ? motivo.trim() : '';
@@ -88,6 +108,61 @@ function rechazar(db, id, motivo) {
 
 const entregar = (db, id) =>
     cambiarEstado(db, id, { desde: 'Aprobado', hacia: 'Entregado', columnaFecha: 'fecha_entrega' });
+
+// ---------- Cancelaciones ----------
+
+/** Estados en que el cliente aún puede arrepentirse: sin pagar lo cancela él; pagado, lo decide el dueño. */
+const CANCELABLES_POR_DUENO = ['PorPagar', 'Pendiente', 'Aprobado'];
+
+/** El cliente cancela (desde WhatsApp, tras confirmar) su pedido que aún no paga. */
+async function cancelarPorCliente(db, telefono, idPedido) {
+    const [r] = await db.query(
+        `UPDATE Pedidos p JOIN Clientes c ON c.id_cliente = p.id_cliente
+         SET p.estado = 'Cancelado', p.fecha_cancelacion = NOW(), p.cancelado_por = 'cliente'
+         WHERE p.id_pedido = ? AND c.telefono = ? AND p.estado = 'PorPagar'`,
+        [idPedido, telefono]
+    );
+    if (r.affectedRows === 0) throw conflicto('El pedido ya no está por pagar');
+    return obtener(db, idPedido);
+}
+
+/** El cliente pidió cancelar un pedido que ya pagó: queda marcado para que el dueño decida. */
+async function solicitarCancelacion(db, telefono, idPedido) {
+    const [r] = await db.query(
+        `UPDATE Pedidos p JOIN Clientes c ON c.id_cliente = p.id_cliente
+         SET p.cancelacion_solicitada = COALESCE(p.cancelacion_solicitada, NOW())
+         WHERE p.id_pedido = ? AND c.telefono = ? AND p.estado IN ('Pendiente', 'Aprobado')`,
+        [idPedido, telefono]
+    );
+    if (r.affectedRows === 0) throw conflicto('El pedido ya no se puede cancelar');
+    return obtener(db, idPedido);
+}
+
+/** El dueño cancela el pedido (si estaba pagado, la devolución la coordina él con el cliente). */
+async function cancelarPorDueno(db, idPedido) {
+    const [r] = await db.query(
+        `UPDATE Pedidos SET estado = 'Cancelado', fecha_cancelacion = NOW(), cancelado_por = 'dueno'
+         WHERE id_pedido = ? AND estado IN (?)`,
+        [idPedido, CANCELABLES_POR_DUENO]
+    );
+    if (r.affectedRows === 0) {
+        const [filas] = await db.query('SELECT estado FROM Pedidos WHERE id_pedido = ?', [idPedido]);
+        if (filas.length === 0) throw noEncontrado('El pedido no existe');
+        throw conflicto(`El pedido está en estado "${filas[0].estado}"; ya no se puede cancelar`);
+    }
+    return obtener(db, idPedido);
+}
+
+/** El dueño decide seguir con un pedido que el cliente pidió cancelar. */
+async function mantenerPedido(db, idPedido) {
+    const [r] = await db.query(
+        `UPDATE Pedidos SET cancelacion_solicitada = NULL
+         WHERE id_pedido = ? AND cancelacion_solicitada IS NOT NULL AND estado IN ('Pendiente', 'Aprobado')`,
+        [idPedido]
+    );
+    if (r.affectedRows === 0) throw conflicto('Este pedido no tiene una solicitud de cancelación pendiente');
+    return obtener(db, idPedido);
+}
 
 /** Crea el cliente si no existe y devuelve su id (atómico ante mensajes simultáneos). */
 async function asegurarCliente(conexion, telefono) {
@@ -169,12 +244,20 @@ async function crearPedidoPorPagar(db, telefono, items) {
     return obtener(db, idPedido);
 }
 
+const DIAS_REENVIO_TRAS_RECHAZO = 7;
+
+/** El cliente envió un comprobante sin tener un pedido por pagar: primero tiene que pedir. */
+class SinPedidoError extends Error {}
+
 /**
- * Asocia un comprobante (ya validado) al pedido PorPagar del cliente, o crea un
- * pedido sin productos si el cliente no había pedido por el bot.
+ * Asocia un comprobante (ya validado) al pedido del cliente:
+ * - su pedido PorPagar, o
+ * - su último pedido Rechazado (de los últimos 7 días): el mensaje de rechazo le pide reenviar el
+ *   comprobante, así que el pedido vuelve a Pendiente con la foto nueva.
+ * Si no tiene ninguno lanza SinPedidoError: nunca se crean pedidos sin productos.
  * Se ejecuta dentro de la transacción que recibe, para que el archivo y la fila
  * se guarden juntos (ver bot/comprobantes.js).
- * @returns {Promise<{ idPedido: number, total: number|null }>}
+ * @returns {Promise<{ idPedido: number, total: number|null, reenvio: boolean }>}
  */
 async function adjuntarComprobante(conexion, telefono, rutaComprobante) {
     const idCliente = await asegurarCliente(conexion, telefono);
@@ -190,14 +273,26 @@ async function adjuntarComprobante(conexion, telefono, rutaComprobante) {
              WHERE id_pedido = ?`,
             [rutaComprobante, abiertos[0].id_pedido]
         );
-        return { idPedido: abiertos[0].id_pedido, total: abiertos[0].total };
+        return { idPedido: abiertos[0].id_pedido, total: abiertos[0].total, reenvio: false };
     }
-    const [r] = await conexion.query(
-        `INSERT INTO Pedidos (id_cliente, ruta_comprobante, estado, fecha_comprobante)
-         VALUES (?, ?, 'Pendiente', NOW())`,
-        [idCliente, rutaComprobante]
+    const [rechazados] = await conexion.query(
+        `SELECT id_pedido, total FROM Pedidos
+         WHERE id_cliente = ? AND estado = 'Rechazado' AND total IS NOT NULL
+           AND fecha_rechazo >= NOW() - INTERVAL ? DAY
+           AND NOT EXISTS (SELECT 1 FROM Pedidos p2 WHERE p2.id_cliente = Pedidos.id_cliente AND p2.fecha > Pedidos.fecha)
+         ORDER BY fecha DESC LIMIT 1 FOR UPDATE`,
+        [idCliente, DIAS_REENVIO_TRAS_RECHAZO]
     );
-    return { idPedido: r.insertId, total: null };
+    if (rechazados.length > 0) {
+        await conexion.query(
+            `UPDATE Pedidos SET estado = 'Pendiente', ruta_comprobante = ?, fecha_comprobante = NOW(),
+                                motivo_rechazo = NULL, fecha_rechazo = NULL
+             WHERE id_pedido = ? AND estado = 'Rechazado'`,
+            [rutaComprobante, rechazados[0].id_pedido]
+        );
+        return { idPedido: rechazados[0].id_pedido, total: rechazados[0].total, reenvio: true };
+    }
+    throw new SinPedidoError('El cliente no tiene un pedido por pagar');
 }
 
 /** Último pedido del cliente (para responder "estado" por WhatsApp). */
@@ -211,11 +306,17 @@ async function ultimoDelCliente(db, telefono) {
 }
 
 module.exports = {
+    SinPedidoError,
     ESTADOS,
     MAX_CANTIDAD_POR_PRODUCTO,
     adjuntarComprobante,
     aprobar,
+    cancelarPorCliente,
+    cancelarPorDueno,
     crearPedidoPorPagar,
+    listarCancelacionesSolicitadas,
+    mantenerPedido,
+    solicitarCancelacion,
     entregar,
     enTransaccion,
     listarPorEstado,

@@ -6,7 +6,7 @@ import { avisar, confirmar, pesos } from '@/lib/formato';
 import type { Pedido } from '@/lib/tipos';
 
 /**
- * Aprobar y rechazar pagos, con confirmación y aviso del resultado.
+ * Aprobar y rechazar pagos, y cancelar o mantener pedidos, con confirmación y aviso del resultado.
  * Cada acción resuelve `true` si el pedido ya no está pendiente (se puede sacar de la lista).
  */
 export function useAccionesPedido() {
@@ -43,5 +43,23 @@ export function useAccionesPedido() {
     return ejecutar(id, () => api(`/pedidos/${id}/rechazar`, { metodo: 'PUT', cuerpo: { motivo } }), 'Pago rechazado');
   }
 
-  return { aprobar, rechazar, procesando };
+  async function cancelar(pedido: Pedido) {
+    const pagado = !!pedido.ruta_comprobante;
+    const detalle = pagado
+      ? ' El cliente ya envió su pago: tendrás que devolverle el dinero por tu cuenta.'
+      : ' El cliente aún no ha pagado.';
+    if (!(await confirmar('Cancelar pedido', `¿Cancelar el pedido #${pedido.id_pedido}?${detalle} Se le avisará al cliente.`, 'Cancelar pedido'))) {
+      return false;
+    }
+    return ejecutar(pedido.id_pedido, () => api(`/pedidos/${pedido.id_pedido}/cancelar`, { metodo: 'PUT' }), 'Pedido cancelado');
+  }
+
+  async function mantener(pedido: Pedido) {
+    if (!(await confirmar('Seguir con el pedido', `El pedido #${pedido.id_pedido} sigue activo y se le avisará al cliente. Te recomendamos escribirle para explicarle.`, 'Seguir con el pedido'))) {
+      return false;
+    }
+    return ejecutar(pedido.id_pedido, () => api(`/pedidos/${pedido.id_pedido}/mantener`, { metodo: 'PUT' }), 'Pedido mantenido');
+  }
+
+  return { aprobar, rechazar, cancelar, mantener, procesando };
 }

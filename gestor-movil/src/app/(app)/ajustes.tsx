@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Switch, TextInput, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Constants from 'expo-constants';
 
@@ -32,6 +32,14 @@ export default function Ajustes() {
             <FormularioNegocio
               key={`${config.datos.nombre_negocio}|${config.datos.datos_transferencia}|${config.datos.color_marca}`}
               inicial={config.datos}
+              alGuardar={config.setDatos}
+            />
+          ) : null}
+          {config.datos ? (
+            <FormularioAsistente
+              key={[config.datos.asistente_activo, config.datos.direccion_retiro, config.datos.horario_atencion, config.datos.preguntas_frecuentes].join('|')}
+              inicial={config.datos}
+              ia={resumen.datos?.ia}
               alGuardar={config.setDatos}
             />
           ) : null}
@@ -147,6 +155,108 @@ function FormularioNegocio({ inicial, alGuardar }: { inicial: Configuracion; alG
         </View>
 
         <Boton texto="Guardar cambios" icono="save-outline" alPresionar={guardar} cargando={guardando} desactivado={!hayCambios} grande />
+      </Tarjeta>
+    </>
+  );
+}
+
+/** Asistente de IA en WhatsApp: interruptor e información que puede dar a los clientes. */
+function FormularioAsistente({ inicial, ia, alGuardar }: {
+  inicial: Configuracion; ia?: Resumen['ia']; alGuardar: (c: Configuracion) => void;
+}) {
+  const { api } = useSesion();
+  const [activo, setActivo] = useState(inicial.asistente_activo === 'si');
+  const [direccion, setDireccion] = useState(inicial.direccion_retiro);
+  const [horario, setHorario] = useState(inicial.horario_atencion);
+  const [preguntas, setPreguntas] = useState(inicial.preguntas_frecuentes);
+  const [guardando, setGuardando] = useState(false);
+
+  const disponible = !!ia?.puedeConversar;
+  const hayCambios = activo !== (inicial.asistente_activo === 'si') || direccion !== inicial.direccion_retiro
+    || horario !== inicial.horario_atencion || preguntas !== inicial.preguntas_frecuentes;
+
+  const cambiarActivo = async (valor: boolean) => {
+    if (valor && !(await confirmar(
+      'Activar el asistente',
+      'El asistente responderá automáticamente los mensajes de tus clientes. Úsalo solo con un número de WhatsApp ' +
+      'dedicado al negocio: con un número personal, también respondería a tus contactos.',
+      'Entiendo, activar',
+    ))) return;
+    setActivo(valor);
+  };
+
+  const guardar = async () => {
+    setGuardando(true);
+    try {
+      const nuevo = await api<Configuracion>('/configuracion', {
+        metodo: 'PUT',
+        cuerpo: { asistente_activo: activo ? 'si' : 'no', direccion_retiro: direccion, horario_atencion: horario, preguntas_frecuentes: preguntas },
+      });
+      alGuardar(nuevo);
+      avisar('Guardado', activo ? 'El asistente usará esta información desde el próximo mensaje.' : 'El asistente quedó apagado.');
+    } catch (e) {
+      if (!(e instanceof SesionExpiradaError)) avisar('No se pudo guardar', e instanceof Error ? e.message : undefined);
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <>
+      <T variante="etiqueta" estilo={{ marginTop: 8 }}>Asistente de WhatsApp</T>
+      <Tarjeta estilo={{ gap: 14 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Ionicons name="chatbubbles" size={26} color={activo ? COLORES.verde : COLORES.textoSuave} />
+          <View style={{ flex: 1 }}>
+            <T variante="fuerte">Atender a los clientes automáticamente</T>
+            <T variante="suave" estilo={{ fontSize: 12 }}>
+              Saluda, muestra los productos, toma pedidos con confirmación y responde dudas (precios, pago, horario, dirección).
+            </T>
+          </View>
+          <Switch value={activo} onValueChange={cambiarActivo}
+            trackColor={{ true: COLORES.verde, false: '#c9bfc3' }} thumbColor="#ffffff" accessibilityLabel="Activar el asistente" />
+        </View>
+
+        {!disponible ? (
+          <T variante="semi" estilo={{ fontSize: 12, color: COLORES.textoSuave }}>
+            La IA no está configurada en el servidor: responderá el bot guiado (catálogo, pedidos escribiendo el
+            producto y la cantidad, y confirmación), pero no podrá responder otras dudas.
+          </T>
+        ) : ia?.soloDemo ? (
+          <T variante="semi" estilo={{ fontSize: 12, color: COLORES.ambar }}>
+            Modo demostración: la IA solo atiende a los clientes de ejemplo. A tus clientes reales los atiende el bot
+            guiado, sin IA (catálogo, pedidos escribiendo el producto y la cantidad, y confirmación).
+          </T>
+        ) : null}
+        <T variante="suave" estilo={{ fontSize: 12 }}>
+          Nunca aprueba pagos, ni cambia pedidos o precios. Si no sabe algo, le dice al cliente que tú le responderás.
+          Si escribes tú en un chat, el asistente se calla en ese chat por 30 minutos.
+        </T>
+
+        <View style={{ gap: 6 }}>
+          <T variante="semi">Dirección para retirar</T>
+          <TextInput style={ui.input} value={direccion} onChangeText={setDireccion} maxLength={200}
+            placeholder="Ej: Av. Alemania 123, Temuco" placeholderTextColor={COLORES.textoSuave} accessibilityLabel="Dirección para retirar" />
+        </View>
+        <View style={{ gap: 6 }}>
+          <T variante="semi">Horario de atención</T>
+          <TextInput style={ui.input} value={horario} onChangeText={setHorario} maxLength={200}
+            placeholder="Ej: lunes a viernes de 10:00 a 18:00" placeholderTextColor={COLORES.textoSuave} accessibilityLabel="Horario de atención" />
+        </View>
+        <View style={{ gap: 6 }}>
+          <T variante="semi">Preguntas frecuentes</T>
+          <TextInput
+            style={[ui.input, { minHeight: 120, textAlignVertical: 'top' }]}
+            value={preguntas} onChangeText={setPreguntas} multiline maxLength={1000}
+            placeholder={'Ej:\n¿Hacen envíos? Sí, dentro de Temuco por $2.000.\n¿Aceptan efectivo? Sí, al retirar.'}
+            placeholderTextColor={COLORES.textoSuave} accessibilityLabel="Preguntas frecuentes"
+          />
+          <T variante="suave" estilo={{ fontSize: 12 }}>
+            Lo que no esté aquí ni en tus productos, el asistente no lo sabe y no lo inventa. {preguntas.length}/1000
+          </T>
+        </View>
+
+        <Boton texto="Guardar asistente" icono="save-outline" alPresionar={guardar} cargando={guardando} desactivado={!hayCambios} grande />
       </Tarjeta>
     </>
   );

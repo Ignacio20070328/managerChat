@@ -9,7 +9,11 @@
     "crear-password": "node scripts/crear-password.js",
     "api": "BOT_DESACTIVADO=1 node --watch index.js",
     "demo:cargar": "node scripts/demo.js cargar",
-    "demo:borrar": "node scripts/demo.js borrar"
+    "demo:borrar": "node scripts/demo.js borrar",
+    "respaldo": "node scripts/respaldo.js",
+    "restaurar": "node scripts/restaurar.js",
+    "test": "node --test 'pruebas/**/*.test.js'",
+    "chat": "node scripts/simular-chat.js"
   },
   "keywords": [],
   "author": "",
@@ -21,7 +25,7 @@
     "express": "^5.3.0",
     "mysql2": "^3.24.6",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "^1.34.8"
+    "whatsapp-web.js": "github:wwebjs/whatsapp-web.js#38eb45b2759450cc6fccb6a7a3f2cbc3bdb87db2"
   },
   "engines": {
     "node": ">=20"

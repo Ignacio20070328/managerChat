@@ -18,7 +18,14 @@ const CLAVES = {
     // Se envía al cliente junto con el total de su pedido
     datos_transferencia: { maximo: 1000, defecto: '' },
     // Color principal de la app (cabeceras, botones destacados)
-    color_marca: { maximo: 7, defecto: COLORES_MARCA[0].valor, opciones: COLORES_MARCA.map((c) => c.valor) }
+    color_marca: { maximo: 7, defecto: COLORES_MARCA[0].valor, opciones: COLORES_MARCA.map((c) => c.valor) },
+    // Asistente de IA en WhatsApp (responde dudas de los clientes). Apagado por defecto:
+    // solo debe activarse con un número de WhatsApp dedicado al negocio.
+    asistente_activo: { maximo: 2, defecto: 'no', opciones: ['si', 'no'] },
+    // Información que el asistente puede dar (si está vacía, dice que no la tiene)
+    direccion_retiro: { maximo: 200, defecto: '' },
+    horario_atencion: { maximo: 200, defecto: '' },
+    preguntas_frecuentes: { maximo: 1000, defecto: '' }
 };
 
 async function obtener(db) {
@@ -38,7 +45,7 @@ async function actualizar(db, datos) {
         const limpio = valor.trim();
         if (limpio.length > regla.maximo) throw validacion(`"${clave}" no puede superar ${regla.maximo} caracteres`);
         if (regla.opciones && !regla.opciones.includes(limpio.toLowerCase())) {
-            throw validacion(`"${clave}" debe ser uno de los colores disponibles`);
+            throw validacion(`"${clave}" debe ser uno de: ${regla.opciones.join(', ')}`);
         }
         cambios.push([clave, regla.opciones ? limpio.toLowerCase() : limpio]);
     }

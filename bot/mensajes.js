@@ -6,7 +6,18 @@ const pesos = (monto) =>
 const lineasItems = (items) =>
     items.map((i) => `• ${i.cantidad} × ${i.nombre} — ${pesos(i.cantidad * i.precio_unitario)}`).join('\n');
 
-const COMO_PEDIR = 'Para pedir, responde con el *número* del producto y la *cantidad*, por ejemplo: *1x2, 2x1*';
+const COMO_PEDIR = 'Para pedir, escríbeme el producto y cuántos quieres (por ejemplo *2 de …*), ' +
+    'o el código *número x cantidad* (por ejemplo *1x2*).';
+
+/** Instrucciones para pedir con un ejemplo real del catálogo. */
+const comoPedir = (productos) => {
+    const p = productos?.[0];
+    if (!p) return COMO_PEDIR;
+    return `Para pedir, escríbeme qué quieres y cuántos, por ejemplo: *2 de ${p.nombre}*\n` +
+        `(o el código *1x2*: producto 1, 2 unidades).`;
+};
+
+const listaCatalogo = (productos) => productos.map((p, i) => `*${i + 1}.* ${p.nombre} — ${pesos(p.precio)}`).join('\n');
 
 module.exports = {
     pesos,
@@ -15,8 +26,34 @@ module.exports = {
         if (productos.length === 0) {
             return `🙏 ${nombreNegocio}: por ahora no tenemos productos disponibles. ¡Vuelve a consultar pronto!`;
         }
-        const lista = productos.map((p, i) => `*${i + 1}.* ${p.nombre} — ${pesos(p.precio)}`).join('\n');
-        return `🛍️ *${nombreNegocio}* — productos disponibles:\n\n${lista}\n\n${COMO_PEDIR}`;
+        return `🛍️ *${nombreNegocio}* — productos disponibles:\n\n${listaCatalogo(productos)}\n\n${comoPedir(productos)}`;
+    },
+
+    // Primer mensaje de un cliente (o uno que el bot no entiende): saludo + catálogo + cómo comprar
+    bienvenida(productos, nombreNegocio) {
+        if (productos.length === 0) {
+            return `👋 ¡Hola! Te escribe *${nombreNegocio}*. Por ahora no tenemos productos disponibles; el dueño te responderá por aquí.`;
+        }
+        return `👋 ¡Hola! Te escribe *${nombreNegocio}*. Estos son nuestros productos:\n\n${listaCatalogo(productos)}\n\n` +
+            `🛒 ${comoPedir(productos)}\n\nTe mostraré el total y los datos para transferir. ` +
+            'Después me envías la *foto del comprobante* con la palabra *comprobante*.';
+    },
+
+    noEntendido(productos) {
+        return '🤔 No entendí tu mensaje.\n\n' + `${comoPedir(productos)}\n` +
+            'Escribe *menu* para ver los productos o *estado* para ver tu pedido. Si tienes otra consulta, el dueño te responderá por aquí.';
+    },
+
+    preguntarCantidad(producto) {
+        return `¿Cuántas unidades de *${producto.nombre}* (${pesos(producto.precio)} c/u) quieres? Responde solo con el número, por ejemplo *2*.`;
+    },
+
+    comprobanteSinPedido(productos, nombreNegocio) {
+        const catalogo = productos.length
+            ? `Primero elige tus productos 👇\n\n${listaCatalogo(productos)}\n\n${comoPedir(productos)}`
+            : `Por ahora *${nombreNegocio}* no tiene productos disponibles; el dueño te responderá por aquí.`;
+        return '🧾 Recibimos tu foto, pero *todavía no tienes un pedido*, así que no sabemos qué estás comprando.\n\n' +
+            `${catalogo}\n\nCuando confirmes el pedido, vuelve a enviar la foto del comprobante con la palabra *comprobante*.`;
     },
 
     pedidoCreado(pedido, datosTransferencia) {
@@ -30,12 +67,15 @@ module.exports = {
 
     pedidoInvalido: (detalle) => `⚠️ ${detalle}.\n\n${COMO_PEDIR}\nEscribe *menu* para ver los productos.`,
 
+    faltaFotoComprobante:
+        '📸 Para registrar tu pago, envía la *foto* del comprobante y escribe la palabra *comprobante* en el mismo mensaje (como texto de la foto).',
+
     pedirPalabraComprobante:
         '📸 Para registrar tu pago, por favor envía la foto escribiendo la palabra "comprobante" en el mismo mensaje.',
 
-    comprobanteRecibido(idPedido, total) {
+    comprobanteRecibido(idPedido, total, reenvio = false) {
         const detalle = total ? ` del pedido #${idPedido} (${pesos(total)})` : '';
-        return `✅ Recibimos tu comprobante${detalle}. Te avisaremos cuando el pago sea validado.`;
+        return `✅ Recibimos tu ${reenvio ? 'nuevo ' : ''}comprobante${detalle}. Te avisaremos cuando el pago sea validado.`;
     },
 
     formatoInvalido: '⚠️ No pudimos leer la imagen. Envía el comprobante como foto (JPG o PNG) de menos de 10 MB.',
@@ -60,11 +100,56 @@ module.exports = {
             Pendiente: 'tiene el comprobante recibido y estamos revisando el pago.',
             Aprobado: 'tiene el pago aprobado y está listo para retirar. 🎉',
             Rechazado: `fue rechazado. Motivo: ${pedido.motivo_rechazo}`,
-            Entregado: 'ya fue entregado. ¡Gracias por tu compra! 💚'
+            Entregado: 'ya fue entregado. ¡Gracias por tu compra! 💚',
+            Cancelado: 'fue cancelado.'
         };
-        return `📦 Tu pedido #${pedido.id_pedido}${total} ${textos[pedido.estado]}`;
+        const solicitud = pedido.cancelacion_solicitada && ['Pendiente', 'Aprobado'].includes(pedido.estado)
+            ? '\n📩 Pediste cancelarlo: el dueño te contactará por aquí.' : '';
+        return `📦 Tu pedido #${pedido.id_pedido}${total} ${textos[pedido.estado]}${solicitud}`;
     },
 
-    ayuda: '👋 Hola. Puedes escribir:\n• *menu* — ver productos y precios\n• *estado* — ver cómo va tu pedido\n' +
-        '• Enviar la foto de tu pago con la palabra *comprobante*'
+    // Cancelaciones
+    confirmarCancelacion(pedido) {
+        return `🗑️ ¿Seguro que quieres cancelar tu pedido #${pedido.id_pedido}?\n${lineasItems(pedido.items)}\n\n` +
+            `*Total: ${pesos(pedido.total)}*\n\nResponde *sí* para cancelarlo o *no* para mantenerlo.`;
+    },
+    pedidoCanceladoPorCliente: (pedido) =>
+        `✅ Listo, cancelamos tu pedido #${pedido.id_pedido}. No tienes que pagar nada.\nSi quieres pedir otra cosa, escribe *menu*.`,
+    cancelacionDescartada: (idPedido) => `👍 Perfecto, tu pedido #${idPedido} sigue activo.`,
+    cancelacionSolicitada: (pedido) =>
+        `Tu pedido #${pedido.id_pedido} ya tiene el pago enviado, así que no puedo cancelarlo automáticamente.\n\n` +
+        '📩 Le avisamos al dueño: te contactará por aquí para coordinar la cancelación y la devolución de tu dinero.',
+    sinPedidoParaCancelar: 'No tienes un pedido activo para cancelar. Escribe *estado* para ver tu último pedido.',
+    noSePudoCancelar: (pedido) => `Tu pedido #${pedido.id_pedido} cambió de estado y ya no se puede cancelar desde aquí. ` +
+        'Escribe *estado* para verlo; si necesitas ayuda, el dueño te responderá por aquí.',
+    // Avisos del dueño (desde la app)
+    pedidoCanceladoPorDueno: (pedido) => pedido.ruta_comprobante
+        ? `❌ Tu pedido #${pedido.id_pedido} fue *cancelado*. El dueño te contactará por aquí para la devolución de tu pago.`
+        : `❌ Tu pedido #${pedido.id_pedido} fue *cancelado*. Si quieres pedir otra cosa, escribe *menu*.`,
+    cancelacionNoAceptada: (pedido) =>
+        `ℹ️ El dueño revisó tu solicitud: tu pedido #${pedido.id_pedido} *sigue activo*. Si tienes dudas, escríbele por aquí.`,
+
+    // Asistente de IA (servicios/asistente.js)
+    asistenteNoDisponible: 'En este momento no puedo responder tu consulta 🙏. Puedes escribir *menu* para ver los productos ' +
+        'o *estado* para ver tu pedido, o espera y el dueño te responderá por aquí.',
+    asistenteDatoNoVerificado: 'Para no darte un dato equivocado, revisa los precios con *menu* o espera: el dueño te responderá por aquí.',
+
+    // Pedidos en lenguaje natural (asistente, etapa 2). El total lo calcula el servidor, nunca la IA.
+    confirmarPedido(items, total, pedidoAReemplazar) {
+        const reemplazo = pedidoAReemplazar
+            ? `\n\n⚠️ Esto reemplazará tu pedido #${pedidoAReemplazar.id_pedido} que está por pagar.`
+            : '';
+        return `📝 ¿Confirmas este pedido?\n${items.map((i) => `• ${i.cantidad} × ${i.nombre} — ${pesos(i.cantidad * i.precio)}`).join('\n')}` +
+            `\n\n*Total: ${pesos(total)}*${reemplazo}\n\nResponde *sí* para confirmarlo o *no* para cancelarlo.`;
+    },
+    pedidoCancelado: 'Listo, no se creó el pedido. Si quieres, dime qué te gustaría pedir o escribe *menu* para ver los productos.',
+    pedidoQuedariaVacio: 'Así tu pedido quedaría sin productos. Si ya no lo quieres, simplemente no lo pagues; si quieres otra cosa, dime qué.',
+    pedidoNoEntendido: 'No pude entender bien tu pedido 🙏. Dime qué productos y cuántos de cada uno, o escribe *menu* para ver los códigos.',
+
+
+    ayuda: '👋 Hola. Así puedes comprar:\n1️⃣ Escribe *menu* para ver los productos\n' +
+        '2️⃣ Pide escribiendo el producto y la cantidad (por ejemplo *2 de …*) o el código (*1x2*)\n' +
+        '3️⃣ Transfiere el total y envía la *foto del comprobante* con la palabra *comprobante*\n' +
+        '• *estado* — ver cómo va tu pedido\n' +
+        '• *cancelar* — cancelar tu pedido'
 };

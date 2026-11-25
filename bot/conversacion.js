@@ -6,24 +6,33 @@ const pedidos = require('../servicios/pedidos');
 const configuracion = require('../servicios/configuracion');
 const { ErrorApi } = require('../lib/errores');
 const mensajes = require('./mensajes');
+const asistenteServicio = require('../servicios/asistente');
 
 const quitarTildes = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 // Palabras que activan cada comando (el mensaje completo, sin tildes ni mayúsculas).
-// El bot NO responde a saludos u otras conversaciones: el número puede ser
-// personal y no debe contestar mensajes que no son para él.
+// Lo que no es un comando solo lo responde el asistente de IA, y solo si el dueño lo activó
+// en Ajustes (requiere un número dedicado: con un número personal contestaría a todos).
 const COMANDOS = {
     menu: ['menu', 'catalogo', 'productos', 'precios', 'pedir', 'comprar'],
     estado: ['estado', 'mi pedido', 'estado pedido', 'estado de mi pedido'],
-    ayuda: ['ayuda', 'info', 'informacion']
+    ayuda: ['ayuda', 'info', 'informacion'],
+    // Escribió "comprobante" pero sin la foto
+    comprobante: ['comprobante', 'el comprobante', 'envio comprobante', 'envio el comprobante', 'aqui va el comprobante']
 };
 
 // "1x2", "1 x 2", "1*2", "1×2" separados por coma, punto y coma, "y" o saltos de línea
 const ITEM = /(\d{1,3})\s*[x×*]\s*(\d{1,3})/g;
-const SOLO_ITEMS = /^\s*\d{1,3}\s*[x×*]\s*\d{1,3}(\s*(,|;|\by\b|\n)?\s*\d{1,3}\s*[x×*]\s*\d{1,3})*\s*[.!]?\s*$/i;
+const SOLO_ITEMS = /^\s*\d{1,3}\s*[x×*]\s*\d{1,3}(\s*(,|;|\by\b|\n)?\s*\d{1,3}\s*[x×*]\s*\d{1,3})*\s*[.,;!]?\s*$/i;
+
+/**
+ * Quita el formato de WhatsApp que el cliente copia del menú: "*1x2*" (negrita), "_1x2_", "~1x2~".
+ * Conserva el "*" entre dos números porque "1*2" también sirve para pedir.
+ */
+const sinFormato = (texto) => (texto || '').replace(/[_~]/g, '').replace(/(?<!\d\s*)\*|\*(?!\s*\d)/g, '');
 
 function normalizar(texto) {
-    return quitarTildes((texto || '').toLowerCase()).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+    return quitarTildes(sinFormato(texto).toLowerCase()).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function detectarComando(texto) {
@@ -36,11 +45,23 @@ function detectarComando(texto) {
 
 /** "1x2, 2x1" → [{ numero: 1, cantidad: 2 }, { numero: 2, cantidad: 1 }] o null si no es un pedido. */
 function parsearItems(texto) {
-    if (!SOLO_ITEMS.test(texto || '')) return null;
+    texto = sinFormato(texto);
+    if (!SOLO_ITEMS.test(texto)) return null;
     return [...texto.matchAll(ITEM)].map((m) => ({ numero: Number(m[1]), cantidad: Number(m[2]) }));
 }
 
-async function procesarTexto(db, telefono, texto) {
+/**
+ * @param asistente  servicio del asistente de IA (inyectable en pruebas). Responde lo que no es un comando,
+ *                   solo si el dueño lo activó en Ajustes; si no, el bot sigue sin responder conversaciones.
+ */
+async function procesarTexto(db, telefono, texto, { asistente = asistenteServicio } = {}) {
+    // ¿Responde "sí" o "no" a un pedido o a una cancelación que el bot le propuso?
+    const confirmacion = await asistente.manejarConfirmacion?.(db, telefono, texto);
+    if (confirmacion) return confirmacion;
+
+    // "cancelar mi pedido" (funciona aunque el asistente esté apagado, como los demás comandos)
+    if (asistente.esPedidoDeCancelar?.(texto)) return asistente.iniciarCancelacion(db, telefono);
+
     const comando = detectarComando(texto);
 
     if (comando === 'menu') {
@@ -56,9 +77,13 @@ async function procesarTexto(db, telefono, texto) {
     if (comando === 'ayuda') {
         return mensajes.ayuda;
     }
+    if (comando === 'comprobante') {
+        return mensajes.faltaFotoComprobante;
+    }
 
     const solicitados = parsearItems(texto);
-    if (!solicitados) return null;
+    if (!solicitados) return asistente.responder(db, telefono, texto);
+    asistente.descartarPropuesta?.(telefono); // pidió directo con códigos: la propuesta anterior ya no aplica
 
     // Los números corresponden al orden del catálogo que muestra "menu"
     const catalogo = await productos.listar(db, { soloActivos: true });
@@ -80,4 +105,10 @@ async function procesarTexto(db, telefono, texto) {
     }
 }
 
-module.exports = { detectarComando, parsearItems, procesarTexto };
+/** Respuesta cuando llega un comprobante pero el cliente no tiene pedido: el catálogo y cómo pedir. */
+async function respuestaComprobanteSinPedido(db) {
+    const [lista, config] = await Promise.all([productos.listar(db, { soloActivos: true }), configuracion.obtener(db)]);
+    return mensajes.comprobanteSinPedido(lista, config.nombre_negocio);
+}
+
+module.exports = { detectarComando, parsearItems, procesarTexto, respuestaComprobanteSinPedido };

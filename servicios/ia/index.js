@@ -46,7 +46,8 @@ function conTiempoLimite(intento, ms, nombre) {
 
 /**
  * Crea la cadena. Cada proveedor es { nombre, modelo(), analizar({ imagenBase64, mime, instrucciones, senal }) }
- * y devuelve el objeto (o texto JSON) que respondió el modelo.
+ * y, si sirve para el asistente, también modeloTexto() y conversar({ sistema, mensajes, esquema, senal }).
+ * Cada método devuelve el objeto (o texto JSON) que respondió el modelo.
  * @param reintentos  reintentos por proveedor ante errores pasajeros
  * @param esperaBaseMs espera antes del primer reintento (se duplica en cada uno, máx. 8 s)
  */
@@ -55,46 +56,68 @@ function crearCadena(proveedores, {
     reintentos = Number.isInteger(Number(process.env.IA_REINTENTOS)) && process.env.IA_REINTENTOS !== '' ? Number(process.env.IA_REINTENTOS) : 1,
     esperaBaseMs = 2000
 } = {}) {
+    /**
+     * Prueba cada proveedor que tenga `metodo`, con tiempo límite, reintentos ante errores
+     * pasajeros y paso al siguiente proveedor si falla.
+     * @returns {Promise<{ proveedor, modelo, datos }>}
+     * @throws Error con el detalle de cada intento si todos fallan
+     */
+    async function ejecutar(metodo, argumentos, normalizar, { limiteMs = tiempoLimiteMs, maxReintentos = reintentos, modeloDe }) {
+        const candidatos = proveedores.filter((p) => typeof p[metodo] === 'function');
+        if (candidatos.length === 0) {
+            throw new Error(proveedores.length ? `Ningún proveedor de IA configurado sirve para "${metodo}"` : 'La IA no está configurada (IA_PROVEEDORES vacío)');
+        }
+        const intentos = [];
+        for (const proveedor of candidatos) {
+            for (let intento = 0; ; intento++) {
+                try {
+                    const respuesta = await conTiempoLimite(
+                        (senal) => proveedor[metodo]({ ...argumentos, senal }),
+                        limiteMs,
+                        proveedor.nombre
+                    );
+                    return { proveedor: proveedor.nombre, modelo: modeloDe(proveedor), datos: normalizar(respuesta) };
+                } catch (error) {
+                    const esDelProveedor = error instanceof ErrorProveedor;
+                    const mensaje = esDelProveedor ? error.message : `error inesperado: ${ocultarSecretos(error.message)}`;
+                    if (esDelProveedor && error.reintentable && intento < maxReintentos) {
+                        const espera = error.esperaMs ?? Math.min(esperaBaseMs * 2 ** intento, 8000);
+                        console.warn(`IA: ${proveedor.nombre} falló (${mensaje}); reintento ${intento + 1}/${maxReintentos} en ${Math.round(espera / 1000)} s`);
+                        await esperar(espera);
+                        continue;
+                    }
+                    intentos.push(`${proveedor.nombre}: ${mensaje}`);
+                    console.warn(`IA: falló ${proveedor.nombre} (${mensaje})`);
+                    // Un error que no amerita cambiar de proveedor corta la cadena
+                    if (esDelProveedor && !error.cambiarDeProveedor) throw new Error(intentos.join(' · '));
+                    break; // siguiente proveedor
+                }
+            }
+        }
+        throw new Error(intentos.join(' · '));
+    }
+
     return {
         activa: proveedores.length > 0,
         nombres: proveedores.map((p) => p.nombre),
+        /** ¿Algún proveedor configurado sirve para conversar (asistente)? */
+        puedeConversar: proveedores.some((p) => typeof p.conversar === 'function'),
+
+        /** Lee un comprobante. */
+        analizarImagen(imagen, mime) {
+            return ejecutar('analizar',
+                { imagenBase64: imagen.toString('base64'), mime, instrucciones: INSTRUCCIONES },
+                normalizarRespuesta,
+                { modeloDe: (p) => p.modelo() });
+        },
 
         /**
-         * @returns {Promise<{ proveedor, modelo, datos }>}
-         * @throws Error con el detalle de cada intento si todos fallan
+         * Conversación de texto. `normalizar` valida la respuesta (la define quien llama).
+         * `opciones` permite un tiempo límite y reintentos más cortos (el cliente está esperando).
          */
-        async analizarImagen(imagen, mime) {
-            if (proveedores.length === 0) throw new Error('La IA no está configurada (IA_PROVEEDORES vacío)');
-            const imagenBase64 = imagen.toString('base64');
-            const intentos = [];
-
-            for (const proveedor of proveedores) {
-                for (let intento = 0; ; intento++) {
-                    try {
-                        const respuesta = await conTiempoLimite(
-                            (senal) => proveedor.analizar({ imagenBase64, mime, instrucciones: INSTRUCCIONES, senal }),
-                            tiempoLimiteMs,
-                            proveedor.nombre
-                        );
-                        return { proveedor: proveedor.nombre, modelo: proveedor.modelo(), datos: normalizarRespuesta(respuesta) };
-                    } catch (error) {
-                        const esDelProveedor = error instanceof ErrorProveedor;
-                        const mensaje = esDelProveedor ? error.message : `error inesperado: ${ocultarSecretos(error.message)}`;
-                        if (esDelProveedor && error.reintentable && intento < reintentos) {
-                            const espera = error.esperaMs ?? Math.min(esperaBaseMs * 2 ** intento, 8000);
-                            console.warn(`IA: ${proveedor.nombre} falló (${mensaje}); reintento ${intento + 1}/${reintentos} en ${Math.round(espera / 1000)} s`);
-                            await esperar(espera);
-                            continue;
-                        }
-                        intentos.push(`${proveedor.nombre}: ${mensaje}`);
-                        console.warn(`IA: falló ${proveedor.nombre} (${mensaje})`);
-                        // Un error que no amerita cambiar de proveedor corta la cadena
-                        if (esDelProveedor && !error.cambiarDeProveedor) throw new Error(intentos.join(' · '));
-                        break; // siguiente proveedor
-                    }
-                }
-            }
-            throw new Error(intentos.join(' · '));
+        conversar({ sistema, mensajes, esquema }, normalizar, opciones = {}) {
+            return ejecutar('conversar', { sistema, mensajes, esquema }, normalizar,
+                { ...opciones, modeloDe: (p) => (p.modeloTexto ? p.modeloTexto() : p.modelo()) });
         }
     };
 }

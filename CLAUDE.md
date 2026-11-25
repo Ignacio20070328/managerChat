@@ -27,15 +27,20 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | `app.js` | `crearApp({ db, auth, bot })`: construye Express **sin efectos** (testeable). Login público; todo `/api` y `/uploads` con sesión. |
 | `rutas/index.js` | Rutas HTTP autenticadas; delegan en `servicios/`. Express 5 envía los errores async al manejador. |
 | `servicios/` | Lógica de negocio y SQL: `pedidos.js` (ciclo de vida, transacciones), `productos.js`, `configuracion.js`, `resumen.js`, `analisis.js` (revisión con IA + reglas). Lanzan `ErrorApi` (`lib/errores.js`) con código y mensaje apto para el usuario. |
-| `servicios/ia/` | Cadena de proveedores de IA con respaldo (`index.js`), instrucciones y validación comunes (`esquema.js`) y un archivo por proveedor en `proveedores/`. |
+| `servicios/ia/` | Cadena de proveedores de IA con respaldo (`index.js`: `analizarImagen` y `conversar`), instrucciones y validación comunes (`esquema.js`) y un archivo por proveedor en `proveedores/`. |
+| `servicios/asistente.js` | Asistente de IA de WhatsApp: arma el contexto (catálogo, datos del negocio, pedidos del cliente), limita, pausa y verifica montos y códigos antes de responder. |
+| `pruebas/` | `npm test` (`node --test`): sin base de datos ni internet (IA simulada, NVIDIA imitado por un servidor local). `pruebas/manual/` usa la IA real con un cliente de ejemplo. |
 | `config/carpetas.js` | `CARPETA_UPLOADS` (fotos de comprobantes). |
-| `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` 1.34.8 (no oficial), estado de conexión y `notificar(telefono, texto)`. |
+| `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` (no oficial), estado de conexión y `notificar(telefono, texto)`. Instalado desde el commit oficial `38eb45b` (fix del QR tras el cambio de WhatsApp Web del 2026-11-23, PR #201990); volver a la versión de npm cuando se publique (> 1.34.8). |
 | `bot/conversacion.js` | `procesarTexto(db, telefono, texto)` → respuesta o `null`. No depende de WhatsApp. |
 | `bot/comprobantes.js` | Valida la imagen y la registra con el pedido en una transacción (archivo + fila, todo o nada). |
 | `bot/mensajes.js` | **Todos** los textos que reciben los clientes. |
 | `lib/auth.js` | Hash scrypt, tokens HMAC de 30 días, límite de intentos de login. |
 | `config/db.js` | Pool `mysql2/promise`. **Fechas en UTC** (`timezone: 'Z'` + `time_zone '+00:00'`). |
-| `db/schema.sql` | Esquema completo. Docker lo carga solo al crear el volumen por primera vez. |
+| `db/schema.sql` | Esquema completo (con reglas CHECK de cada etapa del pedido). Docker lo carga solo al crear el volumen. |
+| `db/init/02-permisos-app.sh` | Al crear la base, deja al usuario de la app con **solo `SELECT, INSERT, UPDATE, DELETE`**. |
+| `db/migraciones/` | Cambios para bases ya creadas. Se aplican **como root** y **después de `npm run respaldo`**. |
+| `scripts/respaldo.js`, `scripts/restaurar.js` | `npm run respaldo` (base + fotos en `respaldos/`, guarda los últimos 10) y `npm run restaurar -- <nombre>` (respalda el estado actual antes de reemplazar). |
 | `scripts/crear-password.js` | `npm run crear-password`: guarda el hash en `.env` y rota `TOKEN_SECRET`. |
 
 ### Base de datos (`gestor_mvp`) — montos en CLP enteros
@@ -43,9 +48,12 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 - **Productos**: `nombre` UNIQUE, `precio`, `activo` (no se borran; se desactivan).
 - **Pedidos**: `total` (NULL si llegó un comprobante sin pedido previo), `estado`, `motivo_rechazo` y una fecha por
   etapa. Ciclo: `PorPagar` (pidió por el bot) → `Pendiente` (llegó comprobante) → `Aprobado` | `Rechazado`
-  → `Entregado`. Máximo un `PorPagar` por cliente (un pedido nuevo lo reemplaza).
+  → `Entregado`, o `Cancelado` (`cancelado_por` cliente/dueño, `fecha_cancelacion`). Máximo un `PorPagar` por
+  cliente (un pedido nuevo lo reemplaza). `cancelacion_solicitada`: el cliente pidió cancelar un pedido ya pagado
+  (`Pendiente`/`Aprobado`); el dueño decide en la app (cancelar y devolver el dinero por fuera, o mantenerlo).
 - **DetallePedido**: copia `precio_unitario` al pedir (cambiar el catálogo no altera pedidos antiguos).
-- **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`, `color_marca`). `color_marca` solo acepta
+- **Configuracion**: clave/valor (`nombre_negocio`, `datos_transferencia`, `color_marca`, `asistente_activo` si/no,
+  `direccion_retiro`, `horario_atencion`, `preguntas_frecuentes`). `color_marca` solo acepta
   los de `COLORES_MARCA` (servicios/configuracion.js), todos con contraste ≥ 5:1 con texto blanco; la API los entrega
   en `colores_disponibles`.
 - **AnalisisComprobante**: 1:1 con el pedido (reanalizar la reemplaza): `estado` (procesando/completado/fallido),
@@ -58,6 +66,8 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | GET | `/api/pedidos?estado=` | Lista por estado con `items`. Lo que espera acción, más antiguo primero; historial (máx. 100), más reciente primero. |
 | GET | `/api/pedidos/:id` | Un pedido con `items`. |
 | PUT | `/api/pedidos/:id/aprobar` · `/rechazar` `{ motivo }` · `/entregar` | Transiciones atómicas (409 si el estado no corresponde). Aprobar y rechazar avisan al cliente y devuelven `notificado`. |
+| PUT | `/api/pedidos/:id/cancelar` · `/mantener` | El dueño cancela (PorPagar/Pendiente/Aprobado) o mantiene un pedido cuya cancelación pidió el cliente. Avisan al cliente. |
+| GET | `/api/pedidos?cancelacion=solicitada` | Pedidos pagados cuyo cliente pidió cancelar (`/resumen` trae `cancelacionesSolicitadas`). |
 | POST | `/api/pedidos/:id/analizar` | Reanaliza el comprobante con IA y espera el resultado. 409 si la IA está desactivada o no hay comprobante. Cada pedido de las listas trae `analisis`. |
 | GET/POST/PUT | `/api/productos`, `/api/productos/:id` | Catálogo (activos primero, luego por nombre: ese orden numera el menú del bot). |
 | GET/PUT | `/api/configuracion` | Nombre del negocio, datos de transferencia y color de marca (+ `colores_disponibles`). |
@@ -65,10 +75,19 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | GET | `/uploads/<archivo>` | Foto del comprobante (con token). |
 
 ### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
-- **No responde conversaciones normales** (el número puede ser personal). Solo reacciona a:
-  `menu`/`catalogo`/`productos`/`precios`/`pedir`/`comprar` → catálogo numerado; `1x2, 2x1` → crea el pedido
-  y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante".
-- El comprobante se asocia al pedido `PorPagar` del cliente; si no hay, crea un pedido sin total.
+- Comandos: `menu`/`catalogo`/`productos`/`precios`/`pedir`/`comprar` → catálogo numerado; `1x2, 2x1` → crea el
+  pedido y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante"; `cancelar` / "cancelar mi pedido" / "ya no
+  quiero mi pedido" → sin pagar: pide «sí» y lo cancela; pagado: marca `cancelacion_solicitada` y avisa que el dueño
+  lo contactará. Las respuestas «sí»/«no» a una propuesta o cancelación se atienden antes que los comandos.
+- Todo lo demás lo responde el **asistente, solo si el dueño lo activó** en Ajustes (apagado por defecto). Con
+  el asistente apagado el bot **no responde conversaciones normales** (el número puede ser personal).
+  Activo: la IA si se puede usar con ese cliente; si no (sin IA, modo demo con cliente real o la IA falla), el
+  **bot guiado sin IA** (`responderSinIa`): entiende "2 de frambuesa y una de mora" por nombre, "2" (número de
+  producto → pregunta cuántos), y si no entiende envía la bienvenida con el catálogo (una vez cada 30 min) o una ayuda
+  corta. En ambos casos el pedido pasa por la confirmación «sí»/«no».
+- El comprobante se asocia al pedido `PorPagar` del cliente, o reabre su último `Rechazado` (≤ 7 días: el aviso de
+  rechazo pide reenviarlo). **Sin pedido no se acepta** (`SinPedidoError`): el bot responde con el catálogo y cómo
+  pedir. Un pedido sin productos (de antes de esta regla) no se puede aprobar (409), solo rechazar.
 - Convierte los **LID** de WhatsApp a teléfono con `client.getContactLidAndPhone()`.
 - Imágenes JPEG/PNG/WebP ≤ 10 MB con nombre aleatorio (nunca el teléfono).
 
@@ -100,6 +119,9 @@ npm start                       # API + bot (pide escanear el QR). npm run dev: 
 npm run api                     # solo la API, SIN WhatsApp (para trabajar en la app)
 npm run demo:cargar             # datos de ejemplo (pedidos en todas las etapas, comprobantes, análisis IA simulado)
 npm run demo:borrar             # borra SOLO los de ejemplo (teléfonos 5690000…, productos "(ejemplo)")
+npm run chat                    # chat simulado como cliente de ejemplo (comandos, pedidos, asistente IA y /foto
+                                #   para enviar un comprobante de ejemplo que revisa la IA), sin WhatsApp
+npm test                        # pruebas (sin base de datos ni internet)
 
 cd gestor-movil && npm install  # app: dependencias SOLO aquí, nunca en la raíz
 cp .env.example .env.local      # poner la IP del computador en EXPO_PUBLIC_API_URL
@@ -108,8 +130,11 @@ npx expo start
 
 Después: en la app, **Productos** (cargar catálogo) y **Ajustes** (datos de transferencia).
 
-Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea el usuario. Con una base vacía:
-`docker compose down -v && docker compose up -d`. Con datos, aplicar `db/schema.sql` a mano y migrar las tablas viejas.
+Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea el usuario. Con una base sin datos
+importantes: `docker compose down -v && docker compose up -d` (**borra la base**). Con datos: `npm run respaldo` y aplicar
+los archivos de `db/migraciones/` que falten, como root:
+`docker exec -i mysql-gestor-mvp sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$MYSQL_DATABASE"' < db/migraciones/<archivo>.sql`
+y los permisos: `docker exec -i mysql-gestor-mvp sh < db/init/02-permisos-app.sh`.
 
 ## Reglas del proyecto
 
@@ -118,6 +143,13 @@ Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea e
 
 - **Nunca commitear** `.env`, `.wwebjs_auth/`, `.wwebjs_cache/` ni `public/uploads/` (ya están en `.gitignore`).
   En el pasado se subió la sesión de WhatsApp al repo público y hubo que reescribir el historial.
+- **Respaldar antes de cualquier cambio en la base** (`npm run respaldo`). `respaldos/` tiene datos personales: está en
+  `.gitignore` y no se comparte.
+- El usuario de la app no puede cambiar la estructura (`ALTER`, `DROP`): migraciones y respaldos van como root.
+  Las reglas CHECK de `Pedidos` exigen: solo `PorPagar` sin comprobante (y nunca con), `Aprobado`/`Entregado` con
+  `fecha_aprobacion`, `Entregado` con `fecha_entrega`, `Rechazado` con motivo y fecha, `total` nulo o > 0.
+- En `.env`, `ADMIN_PASSWORD_HASH` va entre comillas simples: contiene `$` y Docker Compose (que también lee `.env`)
+  lo interpretaría como variables.
 - No escribir credenciales ni IPs en el código: van en `.env` (backend) o `gestor-movil/.env.local` (app).
 - **Nunca poner secretos en `EXPO_PUBLIC_*`**: Expo los copia en texto plano dentro de la app compilada.
 - En desarrollo, `gestor-movil/.env.local` **manda** sobre una variable `EXPO_PUBLIC_*` pasada por terminal en los
@@ -127,10 +159,11 @@ Si el volumen `db_data` ya existía, MySQL **no** ejecuta `schema.sql` ni crea e
 - Errores: lanzar `ErrorApi` (validacion/noEncontrado/conflicto) con un mensaje para el usuario; cualquier otro
   error se registra y responde "Error interno" (nunca exponer `error.message`).
 - Cambios de estado de pedidos: condicionar el `UPDATE` al estado actual (`servicios/pedidos.cambiarEstado`).
-- **Las pruebas actuales borran tablas completas**: no correrlas contra una base con datos que importen. Pendiente:
-  una base de datos separada para pruebas.
-- Pruebas: `crearApp()` acepta un `bot` falso (`{ estado, notificar }`) y escucha en un puerto libre; el bot se
-  prueba con `crearBot(db).client.listeners('message')[0]` sin llamar a `iniciar()`. No hay suite en el repo todavía.
+- **Pruebas: `npm test`** (carpeta `pruebas/`, archivos `*.test.js`). No usan la base ni internet: inyectan una IA
+  falsa (`crearCadena([...])`), un `contexto` (`asistente.responder(…, { contexto })`) o un servidor local en lugar
+  de NVIDIA (`NVIDIA_URL`). Nunca escribir pruebas que borren tablas. `crearApp()` acepta un `bot` falso; el bot se
+  prueba con `crearBot(null).client.listeners('message' | 'message_create')[0]` sin llamar a `iniciar()`.
+  Pendiente: una base separada para pruebas que necesiten MySQL.
 - App: correr `npx tsc --noEmit` y `npx expo lint` dentro de `gestor-movil/` (hoy: 0 errores, 0 avisos).
 
 ## Estado y hoja de ruta
@@ -185,5 +218,30 @@ Proveedor **externo, NO Claude**. Hoy: **NVIDIA** (`servicios/ia/proveedores/nvi
 - `IA_PROVEEDORES=simulado` devuelve datos de ejemplo sin claves. `db/migraciones/` tiene los `ALTER TABLE` para
   bases ya creadas (columna `moneda`).
 - Ideas siguientes: Gemini de respaldo (verificar sus términos: el plan gratuito probablemente tiene la misma
-  restricción), asistente de WhatsApp, asistente para el dueño.
+  restricción), etapas 2 y 3 del asistente, asistente para el dueño.
+
+### Asistente de WhatsApp (etapa 1) — `servicios/asistente.js`
+- Responde dudas con **solo** los datos que le da el servidor: productos (con el código exacto para pedir cada uno),
+  datos de transferencia, dirección, horario, preguntas frecuentes (Ajustes) y los **últimos 3 pedidos de ese
+  cliente** (el teléfono lo da WhatsApp, nunca el texto). Si no está, dice que no sabe y que el dueño responderá.
+- Modelo de texto: **`nvidia/nemotron-3.5-lightning-30b-a3b`** (`NVIDIA_MODELO_TEXTO`), ~0,5-1,2 s. Verificado el
+  2026-11-24 con un cliente de ejemplo: rechaza manipulación, descuentos, aprobar pagos y datos de otros clientes.
+  Tiende a deducir datos que no tiene y a "contar" mal la lista: por eso reglas estrictas + códigos escritos por el
+  servidor + dos **controles sin IA** que descartan la respuesta (y envían `asistenteDatoNoVerificado`): montos que no
+  existen en el catálogo/pedidos/configuración y códigos `NxM` que apuntan a otro producto.
+- No puede cambiar nada por sí sola (no aprueba, no descuenta; los pedidos solo se crean con el «sí» del cliente). Apagado por defecto
+  (`asistente_activo`); con `IA_SOLO_DEMO=1` solo atiende clientes de ejemplo. Límite de 8 mensajes por minuto por
+  cliente; historial de 3 intercambios **solo en memoria** (30 min). Si el dueño escribe a mano en un chat
+  (`message_create` propio que no registró `responder()`/`notificar()` del bot), se calla ahí 30 minutos.
+- Requiere un **número de WhatsApp dedicado** al negocio (con uno personal respondería a todos los contactos).
+- Prueba con la IA real: `node pruebas/manual/asistente-real.js` (cliente de ejemplo, no cambia la base).
+- **Etapa 2 (hecha): pedidos en lenguaje natural con confirmación.** La IA solo devuelve `pedido_items`
+  (número, nombre, cantidad). El servidor (`validarPedido`) identifica el producto **por nombre** contra todo el
+  catálogo (el número solo desempata), lee la cantidad del **texto del cliente** cuando la hay (`cantidadEnTexto`),
+  decide si es pedido nuevo, agregar o quitar por las palabras del cliente (`tipoDePedido`, sin IA), calcula el
+  total y escribe `mensajes.confirmarPedido` (avisa si reemplaza el pedido por pagar). La propuesta vive en memoria
+  10 minutos; `manejarConfirmacion` (sin IA) crea el pedido solo ante un «sí» y cancela ante un «no». Un pedido
+  directo `NxM` o la intervención del dueño descartan la propuesta. Si la IA dice que "muestra el catálogo", se
+  envía el catálogo real.
+- Etapa 3 (pendiente): conversaciones "requiere atención" en la app.
 - Privacidad: avisar a los clientes que las fotos se analizan con un servicio externo (cuando se use con reales).

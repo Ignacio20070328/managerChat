@@ -37,6 +37,19 @@ export function TarjetaPedido({ pedido, fechaDestacada, acciones }: {
         <T variante="suave">Comprobante sin pedido por WhatsApp.</T>
       )}
 
+      {pedido.cancelacion_solicitada && (pedido.estado === 'Pendiente' || pedido.estado === 'Aprobado') ? (
+        <AvisoCancelacion pedido={pedido} />
+      ) : null}
+      {pedido.estado === 'Cancelado' ? (
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <Ionicons name="ban" size={16} color={COLORES.textoSuave} />
+          <T variante="semi" estilo={{ fontSize: 14, color: COLORES.textoMedio, flex: 1 }}>
+            Cancelado {pedido.cancelado_por === 'cliente' ? 'por el cliente' : 'por ti'}
+            {pedido.ruta_comprobante ? ' · había enviado su pago' : ''}
+          </T>
+        </View>
+      ) : null}
+
       {pedido.motivo_rechazo ? (
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <Ionicons name="close-circle" size={16} color={COLORES.rojo} />
@@ -53,7 +66,21 @@ export function TarjetaPedido({ pedido, fechaDestacada, acciones }: {
   );
 }
 
+/** El cliente pidió cancelar un pedido que ya pagó: lo decide el dueño. */
+export function AvisoCancelacion({ pedido }: { pedido: Pedido }) {
+  return (
+    <View style={s.aviso}>
+      <Ionicons name="warning" size={18} color={COLORES.ambar} />
+      <View style={{ flex: 1, gap: 2 }}>
+        <T variante="fuerte" estilo={{ fontSize: 14, color: COLORES.ambar }}>El cliente pidió cancelar · {hace(pedido.cancelacion_solicitada)}</T>
+        <T variante="suave" estilo={{ fontSize: 12 }}>Ya envió su pago. Si lo cancelas, coordina con él la devolución del dinero.</T>
+      </View>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
+  aviso: { flexDirection: 'row', gap: 8, padding: 10, borderRadius: 10, backgroundColor: COLORES.ambarFondo },
   fila: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   items: { backgroundColor: COLORES.superficie, borderRadius: 10, padding: 10, gap: 4 },
 });

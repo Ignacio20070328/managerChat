@@ -19,6 +19,7 @@ function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
 
     // --- Pedidos ---
     r.get('/pedidos', async (req, res) => {
+        if (req.query.cancelacion === 'solicitada') return res.json(await pedidos.listarCancelacionesSolicitadas(db));
         res.json(await pedidos.listarPorEstado(db, req.query.estado));
     });
 
@@ -43,6 +44,20 @@ function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
         const id = idValido(req.params.id, 'ID de pedido');
         await analisis.analizarPedido(db, id, { cadena: ia });
         res.json(await pedidos.obtener(db, id));
+    });
+
+    // Cancelar (el dueño): si el cliente ya había pagado, la devolución se coordina por fuera
+    r.put('/pedidos/:id/cancelar', async (req, res) => {
+        const pedido = await pedidos.cancelarPorDueno(db, idValido(req.params.id, 'ID de pedido'));
+        const notificado = await bot.notificar(pedido.telefono, mensajes.pedidoCanceladoPorDueno(pedido));
+        res.json({ ...pedido, notificado });
+    });
+
+    // Seguir con un pedido que el cliente pidió cancelar
+    r.put('/pedidos/:id/mantener', async (req, res) => {
+        const pedido = await pedidos.mantenerPedido(db, idValido(req.params.id, 'ID de pedido'));
+        const notificado = await bot.notificar(pedido.telefono, mensajes.cancelacionNoAceptada(pedido));
+        res.json({ ...pedido, notificado });
     });
 
     r.put('/pedidos/:id/entregar', async (req, res) => {
@@ -73,7 +88,7 @@ function crearRutas({ db, bot, ia = cadenaDesdeEntorno() }) {
 
     // --- Inicio / Estadísticas ---
     r.get('/resumen', async (req, res) => {
-        res.json({ ...(await resumen.obtener(db)), bot: bot.estado(), ia: { activa: ia.activa, proveedores: ia.nombres, soloDemo: process.env.IA_SOLO_DEMO === '1' } });
+        res.json({ ...(await resumen.obtener(db)), bot: bot.estado(), ia: { activa: ia.activa, proveedores: ia.nombres, soloDemo: process.env.IA_SOLO_DEMO === '1', puedeConversar: ia.puedeConversar } });
     });
 
     return r;

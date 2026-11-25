@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AvisoCancelacion } from '@/components/tarjeta-pedido';
 import { ModalRechazo } from '@/components/modal-rechazo';
 import { Boton, COLORES, Encabezado, EstadoCarga, Insignia, Pantalla, T, Tarjeta } from '@/components/ui';
 import { useAccionesPedido } from '@/hooks/use-acciones-pedido';
@@ -16,6 +17,7 @@ import type { Analisis, Pedido, Resumen } from '@/lib/tipos';
 
 const NOMBRE_ESTADO: Record<Pedido['estado'], string> = {
   PorPagar: 'Esperando pago', Pendiente: 'Por revisar', Aprobado: 'Aprobado', Rechazado: 'Rechazado', Entregado: 'Entregado',
+  Cancelado: 'Cancelado',
 };
 
 /** Revisión de un comprobante: lo que se pidió frente a lo que dice la foto. */
@@ -24,7 +26,7 @@ export default function DetalleComprobante() {
   const { token, api } = useSesion();
   const { datos: pedido, setDatos, error, cargando, refrescando, recargar } = useDatos<Pedido>(`/pedidos/${id}`);
   const resumen = useDatos<Resumen>('/resumen');
-  const { aprobar, rechazar, procesando } = useAccionesPedido();
+  const { aprobar, rechazar, cancelar, mantener, procesando } = useAccionesPedido();
   const { bottom } = useSafeAreaInsets();
   const [fotoGrande, setFotoGrande] = useState(false);
   const [rechazando, setRechazando] = useState(false);
@@ -67,6 +69,19 @@ export default function DetalleComprobante() {
                 </Tarjeta>
               ) : null}
 
+              {pendiente && pedido.cancelacion_solicitada ? (
+                <Tarjeta estilo={{ gap: 10 }}>
+                  <AvisoCancelacion pedido={pedido} />
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <Boton texto="Seguir con él" tipo="secundario" estilo={{ flex: 1 }} desactivado={procesando !== null}
+                      alPresionar={async () => { if (await mantener(pedido)) recargar(); }} />
+                    <Boton texto="Cancelar pedido" tipo="peligro" icono="ban" estilo={{ flex: 1 }}
+                      cargando={procesando === pedido.id_pedido} desactivado={procesando !== null}
+                      alPresionar={async () => { if (await cancelar(pedido)) router.back(); }} />
+                  </View>
+                </Tarjeta>
+              ) : null}
+
               <AvisoSugerencia pedido={pedido} />
 
               <View style={s.fila}>
@@ -84,7 +99,8 @@ export default function DetalleComprobante() {
                   {pedido.items.length ? pedido.items.map((item) => (
                     <T key={item.id_producto} estilo={{ fontSize: 14 }}>{item.cantidad} × {item.nombre}</T>
                   )) : (
-                    <T variante="suave">El cliente no pidió por el bot: confirma con él qué compró.</T>
+                    <T variante="suave">Este pedido no tiene productos, así que no se puede aprobar: recházalo indicando
+                      que haga su pedido por WhatsApp (el bot ya no acepta comprobantes sin pedido).</T>
                   )}
                   <T variante="titulo" estilo={{ fontSize: 20, marginTop: 'auto' }}>{pesos(pedido.total)}</T>
                 </Tarjeta>
@@ -124,8 +140,10 @@ export default function DetalleComprobante() {
         <View style={[s.acciones, { paddingBottom: bottom + 14 }]}>
           <Boton texto="Rechazar" tipo="peligro" icono="close" grande estilo={{ flex: 1 }}
             alPresionar={() => setRechazando(true)} desactivado={procesando !== null} />
-          <Boton texto="Aprobar" tipo="exito" icono="checkmark" grande estilo={{ flex: 1 }}
-            alPresionar={alAprobar} cargando={procesando === pedido.id_pedido} desactivado={procesando !== null} />
+          {pedido.total ? (
+            <Boton texto="Aprobar" tipo="exito" icono="checkmark" grande estilo={{ flex: 1 }}
+              alPresionar={alAprobar} cargando={procesando === pedido.id_pedido} desactivado={procesando !== null} />
+          ) : null}
         </View>
       ) : null}
 

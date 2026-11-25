@@ -104,10 +104,13 @@ function FilaComprobante({ pedido, procesando, bloqueado, alAprobar }: {
             <T variante="cifra">{pesos(montoLeido ?? pedido.total)}</T>
           </View>
           <T variante="suave" estilo={{ fontSize: 12 }} lineas={1}>
-            {pedido.total ? `Pedido #${pedido.id_pedido} de ${pesos(pedido.total)}` : 'Sin pedido por WhatsApp'} · {cuando}
+            {pedido.total ? `Pedido #${pedido.id_pedido} de ${pesos(pedido.total)}` : 'Sin productos: no se puede aprobar'} · {cuando}
           </T>
-          <View style={{ marginTop: 3 }}>
+          <View style={{ marginTop: 3, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
             <Insignia texto={estilo.etiqueta} color={estilo.color} fondo={estilo.fondo} punto />
+            {pedido.cancelacion_solicitada ? (
+              <Insignia texto="Pidió cancelar" color={COLORES.ambar} fondo={COLORES.ambarFondo} />
+            ) : null}
           </View>
         </View>
         <Ionicons name="chevron-forward" size={20} color={COLORES.textoSuave} />
@@ -115,7 +118,7 @@ function FilaComprobante({ pedido, procesando, bloqueado, alAprobar }: {
       <View style={s.motivo}>
         <T variante="semi" estilo={{ fontSize: 13 }}>{motivoDe(pedido)}</T>
       </View>
-      {sugerencia === 'aprobar' ? (
+      {sugerencia === 'aprobar' && pedido.total && !pedido.cancelacion_solicitada ? (
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <Boton texto="Ver detalle" tipo="secundario" alPresionar={abrir} estilo={{ flex: 1 }} desactivado={bloqueado} />
           <Boton texto="Aprobar" tipo="exito" icono="checkmark" alPresionar={alAprobar} estilo={{ flex: 1 }}
