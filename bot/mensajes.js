@@ -70,6 +70,19 @@ module.exports = {
         'o *estado* para ver tu pedido, o espera y el dueño te responderá por aquí.',
     asistenteDatoNoVerificado: 'Para no darte un dato equivocado, revisa los precios con *menu* o espera: el dueño te responderá por aquí.',
 
+    // Pedidos en lenguaje natural (asistente, etapa 2). El total lo calcula el servidor, nunca la IA.
+    confirmarPedido(items, total, pedidoAReemplazar) {
+        const reemplazo = pedidoAReemplazar
+            ? `\n\n⚠️ Esto reemplazará tu pedido #${pedidoAReemplazar.id_pedido} que está por pagar.`
+            : '';
+        return `📝 ¿Confirmas este pedido?\n${items.map((i) => `• ${i.cantidad} × ${i.nombre} — ${pesos(i.cantidad * i.precio)}`).join('\n')}` +
+            `\n\n*Total: ${pesos(total)}*${reemplazo}\n\nResponde *sí* para confirmarlo o *no* para cancelarlo.`;
+    },
+    pedidoCancelado: 'Listo, no se creó el pedido. Si quieres, dime qué te gustaría pedir o escribe *menu* para ver los productos.',
+    pedidoQuedariaVacio: 'Así tu pedido quedaría sin productos. Si ya no lo quieres, simplemente no lo pagues; si quieres otra cosa, dime qué.',
+    pedidoNoEntendido: 'No pude entender bien tu pedido 🙏. Dime qué productos y cuántos de cada uno, o escribe *menu* para ver los códigos.',
+
+
     ayuda: '👋 Hola. Puedes escribir:\n• *menu* — ver productos y precios\n• *estado* — ver cómo va tu pedido\n' +
         '• Enviar la foto de tu pago con la palabra *comprobante*'
 };

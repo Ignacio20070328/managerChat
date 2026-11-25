@@ -62,8 +62,13 @@ async function procesarTexto(db, telefono, texto, { asistente = asistenteServici
         return mensajes.ayuda;
     }
 
+    // ¿Responde "sí" o "no" a un pedido que le propuso el asistente?
+    const confirmacion = await asistente.manejarConfirmacion?.(db, telefono, texto);
+    if (confirmacion) return confirmacion;
+
     const solicitados = parsearItems(texto);
     if (!solicitados) return asistente.responder(db, telefono, texto);
+    asistente.descartarPropuesta?.(telefono); // pidió directo con códigos: la propuesta anterior ya no aplica
 
     // Los números corresponden al orden del catálogo que muestra "menu"
     const catalogo = await productos.listar(db, { soloActivos: true });
