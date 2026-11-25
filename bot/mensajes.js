@@ -6,7 +6,18 @@ const pesos = (monto) =>
 const lineasItems = (items) =>
     items.map((i) => `• ${i.cantidad} × ${i.nombre} — ${pesos(i.cantidad * i.precio_unitario)}`).join('\n');
 
-const COMO_PEDIR = 'Para pedir, responde con el *número* del producto y la *cantidad*, por ejemplo: *1x2, 2x1*';
+const COMO_PEDIR = 'Para pedir, escríbeme el producto y cuántos quieres (por ejemplo *2 de …*), ' +
+    'o el código *número x cantidad* (por ejemplo *1x2*).';
+
+/** Instrucciones para pedir con un ejemplo real del catálogo. */
+const comoPedir = (productos) => {
+    const p = productos?.[0];
+    if (!p) return COMO_PEDIR;
+    return `Para pedir, escríbeme qué quieres y cuántos, por ejemplo: *2 de ${p.nombre}*\n` +
+        `(o el código *1x2*: producto 1, 2 unidades).`;
+};
+
+const listaCatalogo = (productos) => productos.map((p, i) => `*${i + 1}.* ${p.nombre} — ${pesos(p.precio)}`).join('\n');
 
 module.exports = {
     pesos,
@@ -15,8 +26,34 @@ module.exports = {
         if (productos.length === 0) {
             return `🙏 ${nombreNegocio}: por ahora no tenemos productos disponibles. ¡Vuelve a consultar pronto!`;
         }
-        const lista = productos.map((p, i) => `*${i + 1}.* ${p.nombre} — ${pesos(p.precio)}`).join('\n');
-        return `🛍️ *${nombreNegocio}* — productos disponibles:\n\n${lista}\n\n${COMO_PEDIR}`;
+        return `🛍️ *${nombreNegocio}* — productos disponibles:\n\n${listaCatalogo(productos)}\n\n${comoPedir(productos)}`;
+    },
+
+    // Primer mensaje de un cliente (o uno que el bot no entiende): saludo + catálogo + cómo comprar
+    bienvenida(productos, nombreNegocio) {
+        if (productos.length === 0) {
+            return `👋 ¡Hola! Te escribe *${nombreNegocio}*. Por ahora no tenemos productos disponibles; el dueño te responderá por aquí.`;
+        }
+        return `👋 ¡Hola! Te escribe *${nombreNegocio}*. Estos son nuestros productos:\n\n${listaCatalogo(productos)}\n\n` +
+            `🛒 ${comoPedir(productos)}\n\nTe mostraré el total y los datos para transferir. ` +
+            'Después me envías la *foto del comprobante* con la palabra *comprobante*.';
+    },
+
+    noEntendido(productos) {
+        return '🤔 No entendí tu mensaje.\n\n' + `${comoPedir(productos)}\n` +
+            'Escribe *menu* para ver los productos o *estado* para ver tu pedido. Si tienes otra consulta, el dueño te responderá por aquí.';
+    },
+
+    preguntarCantidad(producto) {
+        return `¿Cuántas unidades de *${producto.nombre}* (${pesos(producto.precio)} c/u) quieres? Responde solo con el número, por ejemplo *2*.`;
+    },
+
+    comprobanteSinPedido(productos, nombreNegocio) {
+        const catalogo = productos.length
+            ? `Primero elige tus productos 👇\n\n${listaCatalogo(productos)}\n\n${comoPedir(productos)}`
+            : `Por ahora *${nombreNegocio}* no tiene productos disponibles; el dueño te responderá por aquí.`;
+        return '🧾 Recibimos tu foto, pero *todavía no tienes un pedido*, así que no sabemos qué estás comprando.\n\n' +
+            `${catalogo}\n\nCuando confirmes el pedido, vuelve a enviar la foto del comprobante con la palabra *comprobante*.`;
     },
 
     pedidoCreado(pedido, datosTransferencia) {
@@ -36,9 +73,9 @@ module.exports = {
     pedirPalabraComprobante:
         '📸 Para registrar tu pago, por favor envía la foto escribiendo la palabra "comprobante" en el mismo mensaje.',
 
-    comprobanteRecibido(idPedido, total) {
+    comprobanteRecibido(idPedido, total, reenvio = false) {
         const detalle = total ? ` del pedido #${idPedido} (${pesos(total)})` : '';
-        return `✅ Recibimos tu comprobante${detalle}. Te avisaremos cuando el pago sea validado.`;
+        return `✅ Recibimos tu ${reenvio ? 'nuevo ' : ''}comprobante${detalle}. Te avisaremos cuando el pago sea validado.`;
     },
 
     formatoInvalido: '⚠️ No pudimos leer la imagen. Envía el comprobante como foto (JPG o PNG) de menos de 10 MB.',
@@ -86,6 +123,8 @@ module.exports = {
     pedidoNoEntendido: 'No pude entender bien tu pedido 🙏. Dime qué productos y cuántos de cada uno, o escribe *menu* para ver los códigos.',
 
 
-    ayuda: '👋 Hola. Puedes escribir:\n• *menu* — ver productos y precios\n• *estado* — ver cómo va tu pedido\n' +
-        '• Enviar la foto de tu pago con la palabra *comprobante*'
+    ayuda: '👋 Hola. Así puedes comprar:\n1️⃣ Escribe *menu* para ver los productos\n' +
+        '2️⃣ Pide escribiendo el producto y la cantidad (por ejemplo *2 de …*) o el código (*1x2*)\n' +
+        '3️⃣ Transfiere el total y envía la *foto del comprobante* con la palabra *comprobante*\n' +
+        '• *estado* — ver cómo va tu pedido'
 };

@@ -1,7 +1,8 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const { ComprobanteInvalidoError, registrarComprobante } = require('./comprobantes');
-const { procesarTexto } = require('./conversacion');
+const { procesarTexto, respuestaComprobanteSinPedido } = require('./conversacion');
+const { SinPedidoError } = require('../servicios/pedidos');
 const mensajes = require('./mensajes');
 const { analizarEnSegundoPlano } = require('../servicios/analisis');
 const asistente = require('../servicios/asistente');
@@ -83,14 +84,16 @@ function crearBot(db) {
         try {
             const media = await msg.downloadMedia();
             const telefono = await obtenerTelefono(msg);
-            const { idPedido, total } = await registrarComprobante(db, telefono, media);
+            const { idPedido, total, reenvio } = await registrarComprobante(db, telefono, media);
 
-            console.log(`Comprobante registrado: pedido #${idPedido} del cliente ${telefono}`);
-            await responder(msg, mensajes.comprobanteRecibido(idPedido, total));
+            console.log(`Comprobante registrado: pedido #${idPedido} del cliente ${telefono}${reenvio ? ' (reenvío tras rechazo)' : ''}`);
+            await responder(msg, mensajes.comprobanteRecibido(idPedido, total, reenvio));
             // Revisión previa con IA (si está configurada); no demora la respuesta al cliente
             analizarEnSegundoPlano(db, idPedido);
         } catch (error) {
-            if (error instanceof ComprobanteInvalidoError) {
+            if (error instanceof SinPedidoError) {
+                await responder(msg, await respuestaComprobanteSinPedido(db)).catch(() => {});
+            } else if (error instanceof ComprobanteInvalidoError) {
                 console.warn('Comprobante rechazado:', error.message);
                 await responder(msg, mensajes.formatoInvalido).catch(() => {});
             } else {

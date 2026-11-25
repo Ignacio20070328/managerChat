@@ -79,7 +79,6 @@ async function cargar() {
     const comprobantes = {
         ok: C('0048213377', 14500, haceMinutos(28), 'BancoEjemplo Personas', '#c8102e'),
         menor: C('0091822004', 4000, haceMinutos(130)),
-        sinPedido: C('0073310298', 9000, haceMinutos(70), 'Banco Digital Demo', '#5b2a86'),
         original: C('0066120045', 9500, haceDias(3, 11)),
         // Reutiliza el N° de operación del comprobante "original" (ya entregado)
         copia: C('0066120045', 9500, haceDias(3, 11)),
@@ -153,7 +152,6 @@ async function cargar() {
     // Comprobantes por revisar: uno correcto, monto menor, sin pedido previo y uno reutilizado
     await pedido(1, { items: [item('cereza', 2), item('frambuesa', 1)], comprobante: 'ok' });
     await pedido(2, { items: [item('mora', 1)], comprobante: 'menor' });
-    await pedido(3, { comprobante: 'sinPedido' });
     await pedido(4, { items: [item('frambuesa', 1), item('cereza', 1)], comprobante: 'copia' });
     // Esperando pago
     await pedido(50, { items: [item('cereza', 3)], pedidoHace: haceMinutos(45) });

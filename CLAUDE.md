@@ -31,7 +31,7 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 | `servicios/asistente.js` | Asistente de IA de WhatsApp: arma el contexto (catálogo, datos del negocio, pedidos del cliente), limita, pausa y verifica montos y códigos antes de responder. |
 | `pruebas/` | `npm test` (`node --test`): sin base de datos ni internet (IA simulada, NVIDIA imitado por un servidor local). `pruebas/manual/` usa la IA real con un cliente de ejemplo. |
 | `config/carpetas.js` | `CARPETA_UPLOADS` (fotos de comprobantes). |
-| `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` 1.34.8 (no oficial), estado de conexión y `notificar(telefono, texto)`. |
+| `bot/whatsapp.js` | `crearBot(db)`: eventos de `whatsapp-web.js` (no oficial), estado de conexión y `notificar(telefono, texto)`. Instalado desde el commit oficial `38eb45b` (fix del QR tras el cambio de WhatsApp Web del 2026-11-23, PR #201990); volver a la versión de npm cuando se publique (> 1.34.8). |
 | `bot/conversacion.js` | `procesarTexto(db, telefono, texto)` → respuesta o `null`. No depende de WhatsApp. |
 | `bot/comprobantes.js` | Valida la imagen y la registra con el pedido en una transacción (archivo + fila, todo o nada). |
 | `bot/mensajes.js` | **Todos** los textos que reciben los clientes. |
@@ -73,9 +73,15 @@ Cliente (WhatsApp) ─▶ bot/whatsapp.js ─▶ bot/conversacion.js (menu, pedi
 ### Bot (solo chats individuales; ignora grupos, estados y mensajes propios)
 - Comandos: `menu`/`catalogo`/`productos`/`precios`/`pedir`/`comprar` → catálogo numerado; `1x2, 2x1` → crea el
   pedido y envía total + datos de transferencia; `estado` → último pedido; `ayuda`; foto con la palabra "comprobante".
-- Todo lo demás lo responde el **asistente de IA, solo si el dueño lo activó** en Ajustes (apagado por defecto). Con
+- Todo lo demás lo responde el **asistente, solo si el dueño lo activó** en Ajustes (apagado por defecto). Con
   el asistente apagado el bot **no responde conversaciones normales** (el número puede ser personal).
-- El comprobante se asocia al pedido `PorPagar` del cliente; si no hay, crea un pedido sin total.
+  Activo: la IA si se puede usar con ese cliente; si no (sin IA, modo demo con cliente real o la IA falla), el
+  **bot guiado sin IA** (`responderSinIa`): entiende "2 de frambuesa y una de mora" por nombre, "2" (número de
+  producto → pregunta cuántos), y si no entiende envía la bienvenida con el catálogo (una vez cada 30 min) o una ayuda
+  corta. En ambos casos el pedido pasa por la confirmación «sí»/«no».
+- El comprobante se asocia al pedido `PorPagar` del cliente, o reabre su último `Rechazado` (≤ 7 días: el aviso de
+  rechazo pide reenviarlo). **Sin pedido no se acepta** (`SinPedidoError`): el bot responde con el catálogo y cómo
+  pedir. Un pedido sin productos (de antes de esta regla) no se puede aprobar (409), solo rechazar.
 - Convierte los **LID** de WhatsApp a teléfono con `client.getContactLidAndPhone()`.
 - Imágenes JPEG/PNG/WebP ≤ 10 MB con nombre aleatorio (nunca el teléfono).
 

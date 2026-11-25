@@ -68,16 +68,21 @@ const historiales = new Map();   // telefono → { mensajes: [...], vence }
 const pausas = new Map();        // telefono → hasta (ms)
 const envios = new Map();        // telefono → [marcas de tiempo de mensajes recibidos]
 const propuestas = new Map();    // telefono → { items, total, vence }: pedido esperando "sí"
+const eligiendo = new Map();     // telefono → { producto, vence }: escribió "2" (un producto) y falta la cantidad
+const saludados = new Map();     // telefono → hasta cuándo no repetir la bienvenida completa
+const MINUTOS_ELIGIENDO = 10;
+const MINUTOS_SIN_REPETIR_BIENVENIDA = 30;
 
 /** El dueño respondió a mano en ese chat: el asistente se calla un rato. */
 function pausarPorDueno(telefono, ahora = Date.now()) {
     pausas.set(telefono, ahora + MINUTOS_PAUSA_POR_DUENO * 60_000);
     historiales.delete(telefono); // la conversación ahora la lleva una persona
     propuestas.delete(telefono);
+    eligiendo.delete(telefono);
 }
 
 /** El cliente hizo un pedido por otra vía (p. ej. "2x2"): la propuesta pendiente ya no aplica. */
-const descartarPropuesta = (telefono) => propuestas.delete(telefono);
+const descartarPropuesta = (telefono) => { propuestas.delete(telefono); eligiendo.delete(telefono); };
 
 const estaPausado = (telefono, ahora = Date.now()) => (pausas.get(telefono) ?? 0) > ahora;
 
@@ -103,7 +108,7 @@ function guardarEnHistorial(telefono, pregunta, respuesta, ahora = Date.now()) {
 
 /** Para pruebas: borra todo el estado en memoria. */
 function reiniciarEstado() {
-    historiales.clear(); pausas.clear(); envios.clear(); propuestas.clear();
+    historiales.clear(); pausas.clear(); envios.clear(); propuestas.clear(); eligiendo.clear(); saludados.clear();
 }
 
 // ---------- Contexto (lo único que el asistente sabe) ----------
@@ -460,16 +465,23 @@ async function manejarConfirmacion(db, telefono, texto, {
 async function responder(db, telefono, texto, { cadena = cadenaDesdeEntorno(), ahora = Date.now(), contexto: contextoDado } = {}) {
     const pregunta = String(texto || '').trim().slice(0, LARGO_MAXIMO_PREGUNTA);
     if (!pregunta || !telefono) return null;
-    if (!cadena.puedeConversar) return null;
-    if (process.env.IA_SOLO_DEMO === '1' && !esTelefonoDemo(telefono)) return null;
     if (estaPausado(telefono, ahora)) return null;
 
     const contexto = contextoDado ?? await obtenerContexto(db, telefono);
+    // Apagado: el bot no responde conversaciones (el número puede ser personal)
     if (contexto.config.asistente_activo !== 'si') return null;
     if (superaLimite(telefono, ahora)) {
         console.warn(`Asistente: ${telefono} superó ${MAX_MENSAJES_POR_MINUTO} mensajes por minuto; se ignora`);
         return null;
     }
+
+    // ¿Escribió la cantidad del producto que eligió por número? (no necesita IA)
+    const cantidadElegida = await responderCantidad(telefono, pregunta, contexto, ahora);
+    if (cantidadElegida) return cantidadElegida;
+
+    // Sin IA para este cliente (no configurada, o modo demo con un cliente real): bot guiado
+    const puedeUsarIa = cadena.puedeConversar && !(process.env.IA_SOLO_DEMO === '1' && !esTelefonoDemo(telefono));
+    if (!puedeUsarIa) return responderSinIa(telefono, pregunta, contexto, ahora);
 
     let resultado;
     try {
@@ -484,28 +496,14 @@ async function responder(db, telefono, texto, { cadena = cadenaDesdeEntorno(), a
         );
     } catch (error) {
         console.error('Asistente: no se pudo responder:', error.message);
-        return mensajes.asistenteNoDisponible;
+        // Sin IA, el bot guiado igual puede entender pedidos simples y mostrar cómo comprar
+        return responderSinIa(telefono, pregunta, contexto, ahora);
     }
 
     const { respuesta, requiere_atencion, pedido_items } = resultado.datos;
 
     // El cliente quiere pedir: el servidor valida, calcula el total y escribe la confirmación
-    if (pedido_items.length > 0) {
-        const tipo = tipoDePedido(pregunta);
-        const validado = tipo ? validarPedido(pedido_items, contexto, tipo, pregunta) : { ok: false, motivo: 'pide agregar y quitar a la vez' };
-        if (!validado.ok) {
-            console.warn(`Asistente: pedido no entendido (${validado.motivo})`);
-            // Si el problema es solo la cantidad, se le dice exactamente qué corregir
-            if (validado.motivo.startsWith('más de')) return mensajes.pedidoInvalido(`Puedes pedir hasta ${MAX_CANTIDAD} unidades de cada producto`);
-            if (validado.motivo === 'el pedido quedaría vacío') return mensajes.pedidoQuedariaVacio;
-            return mensajes.pedidoNoEntendido;
-        }
-        propuestas.set(telefono, { items: validado.items, total: validado.total, vence: ahora + MINUTOS_PROPUESTA * 60_000 });
-        const aReemplazar = contexto.pedidos.find((p) => p.estado === 'PorPagar');
-        const confirmacion = mensajes.confirmarPedido(validado.items, validado.total, aReemplazar);
-        guardarEnHistorial(telefono, pregunta, confirmacion, ahora);
-        return confirmacion;
-    }
+    if (pedido_items.length > 0) return proponerPedido(telefono, pregunta, pedido_items, contexto, ahora);
 
     // Si la IA dice que "muestra el catálogo" sin mostrarlo, se envía el catálogo real
     if (/\b(te |le )?(muestro|envio|envío|mando|paso|comparto)\b.{0,25}\b(catalogo|catálogo|menu|menú|productos)\b/i.test(respuesta)) {
@@ -529,6 +527,89 @@ async function responder(db, telefono, texto, { cadena = cadenaDesdeEntorno(), a
 
     guardarEnHistorial(telefono, pregunta, respuesta, ahora);
     return respuesta;
+}
+
+// ---------- Bot guiado (sin IA) ----------
+
+/**
+ * Valida el pedido (lo haya interpretado la IA o el texto), guarda la propuesta y devuelve la
+ * confirmación escrita por el servidor. El pedido se crea solo cuando el cliente responde "sí".
+ */
+function proponerPedido(telefono, pregunta, items, contexto, ahora) {
+    const tipo = tipoDePedido(pregunta);
+    const validado = tipo ? validarPedido(items, contexto, tipo, pregunta) : { ok: false, motivo: 'pide agregar y quitar a la vez' };
+    if (!validado.ok) {
+        console.warn(`Asistente: pedido no entendido (${validado.motivo})`);
+        // Si el problema es solo la cantidad, se le dice exactamente qué corregir
+        if (validado.motivo.startsWith('más de')) return mensajes.pedidoInvalido(`Puedes pedir hasta ${MAX_CANTIDAD} unidades de cada producto`);
+        if (validado.motivo === 'el pedido quedaría vacío') return mensajes.pedidoQuedariaVacio;
+        return mensajes.pedidoNoEntendido;
+    }
+    eligiendo.delete(telefono);
+    propuestas.set(telefono, { items: validado.items, total: validado.total, vence: ahora + MINUTOS_PROPUESTA * 60_000 });
+    const aReemplazar = contexto.pedidos.find((p) => p.estado === 'PorPagar');
+    const confirmacion = mensajes.confirmarPedido(validado.items, validado.total, aReemplazar);
+    guardarEnHistorial(telefono, pregunta, confirmacion, ahora);
+    return confirmacion;
+}
+
+/** Productos del catálogo que el cliente nombró en su mensaje, con la cantidad que escribió (o 1). */
+function pedidoDesdeTexto(texto, { productos }) {
+    const activos = productos.filter((p) => p.activo);
+    return activos.flatMap((producto, i) => {
+        if (!mencionaProducto(texto, producto, productos)) return [];
+        const cantidad = cantidadEnTexto(texto, producto, productos);
+        return [{ numero: i + 1, nombre: producto.nombre, cantidad: typeof cantidad === 'number' ? cantidad : 1 }];
+    });
+}
+
+/** "dos", "2", "2 unidades", "quiero 3" → número; si no, null. */
+function numeroEnTexto(texto) {
+    const t = palabras(texto).filter((w) => !['quiero', 'unidad', 'unidades', 'porfa', 'por', 'favor', 'frascos', 'frasco'].includes(w));
+    if (t.length !== 1) return null;
+    if (/^\d{1,4}$/.test(t[0])) return Number(t[0]);
+    return NUMEROS[t[0]] ?? null;
+}
+
+/** El cliente eligió un producto por su número ("2") y ahora responde la cantidad ("3"). */
+async function responderCantidad(telefono, pregunta, contexto, ahora) {
+    const eleccion = eligiendo.get(telefono);
+    if (!eleccion) return null;
+    if (eleccion.vence < ahora) { eligiendo.delete(telefono); return null; }
+    const cantidad = numeroEnTexto(pregunta);
+    if (cantidad === null) { eligiendo.delete(telefono); return null; }
+    const { producto } = eleccion;
+    const numero = contexto.productos.filter((p) => p.activo).findIndex((p) => p.id_producto === producto.id_producto) + 1;
+    if (numero === 0) { eligiendo.delete(telefono); return mensajes.pedidoNoEntendido; }
+    // El texto de referencia nombra el producto con su cantidad, para que la validación lo lea igual
+    return proponerPedido(telefono, `${cantidad} ${producto.nombre}`, [{ numero, nombre: producto.nombre, cantidad }], contexto, ahora);
+}
+
+/**
+ * Respuestas sin IA (cuando no se puede usar con este cliente o falla): entiende pedidos que nombran
+ * productos del catálogo ("2 de frambuesa y una de mora"), el número de un producto ("2" → pregunta
+ * cuántos) y, si no entiende, muestra la bienvenida con el catálogo y cómo comprar.
+ */
+function responderSinIa(telefono, pregunta, contexto, ahora) {
+    const activos = contexto.productos.filter((p) => p.activo);
+
+    const items = pedidoDesdeTexto(pregunta, contexto);
+    if (items.length > 0) return proponerPedido(telefono, pregunta, items, contexto, ahora);
+
+    // Solo un número: el producto con ese número en el catálogo
+    const soloNumero = /^\s*(\d{1,3})\s*[.!]?\s*$/.exec(pregunta);
+    if (soloNumero) {
+        const producto = activos[Number(soloNumero[1]) - 1];
+        if (producto) {
+            eligiendo.set(telefono, { producto, vence: ahora + MINUTOS_ELIGIENDO * 60_000 });
+            return mensajes.preguntarCantidad(producto);
+        }
+    }
+
+    // No entendió: la primera vez, bienvenida completa; después, una ayuda corta
+    if ((saludados.get(telefono) ?? 0) > ahora) return mensajes.noEntendido(activos);
+    saludados.set(telefono, ahora + MINUTOS_SIN_REPETIR_BIENVENIDA * 60_000);
+    return mensajes.bienvenida(activos, contexto.config.nombre_negocio);
 }
 
 module.exports = {

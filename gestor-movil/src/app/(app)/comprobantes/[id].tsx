@@ -84,7 +84,8 @@ export default function DetalleComprobante() {
                   {pedido.items.length ? pedido.items.map((item) => (
                     <T key={item.id_producto} estilo={{ fontSize: 14 }}>{item.cantidad} × {item.nombre}</T>
                   )) : (
-                    <T variante="suave">El cliente no pidió por el bot: confirma con él qué compró.</T>
+                    <T variante="suave">Este pedido no tiene productos, así que no se puede aprobar: recházalo indicando
+                      que haga su pedido por WhatsApp (el bot ya no acepta comprobantes sin pedido).</T>
                   )}
                   <T variante="titulo" estilo={{ fontSize: 20, marginTop: 'auto' }}>{pesos(pedido.total)}</T>
                 </Tarjeta>
@@ -124,8 +125,10 @@ export default function DetalleComprobante() {
         <View style={[s.acciones, { paddingBottom: bottom + 14 }]}>
           <Boton texto="Rechazar" tipo="peligro" icono="close" grande estilo={{ flex: 1 }}
             alPresionar={() => setRechazando(true)} desactivado={procesando !== null} />
-          <Boton texto="Aprobar" tipo="exito" icono="checkmark" grande estilo={{ flex: 1 }}
-            alPresionar={alAprobar} cargando={procesando === pedido.id_pedido} desactivado={procesando !== null} />
+          {pedido.total ? (
+            <Boton texto="Aprobar" tipo="exito" icono="checkmark" grande estilo={{ flex: 1 }}
+              alPresionar={alAprobar} cargando={procesando === pedido.id_pedido} desactivado={procesando !== null} />
+          ) : null}
         </View>
       ) : null}
 

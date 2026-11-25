@@ -203,27 +203,29 @@ function FormularioAsistente({ inicial, ia, alGuardar }: {
 
   return (
     <>
-      <T variante="etiqueta" estilo={{ marginTop: 8 }}>Asistente de WhatsApp (IA)</T>
+      <T variante="etiqueta" estilo={{ marginTop: 8 }}>Asistente de WhatsApp</T>
       <Tarjeta estilo={{ gap: 14 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Ionicons name="chatbubbles" size={26} color={activo && disponible ? COLORES.verde : COLORES.textoSuave} />
+          <Ionicons name="chatbubbles" size={26} color={activo ? COLORES.verde : COLORES.textoSuave} />
           <View style={{ flex: 1 }}>
-            <T variante="fuerte">Responder dudas de los clientes</T>
+            <T variante="fuerte">Atender a los clientes automáticamente</T>
             <T variante="suave" estilo={{ fontSize: 12 }}>
-              Precios, productos, datos de pago, horario, dirección y el estado de su pedido.
+              Saluda, muestra los productos, toma pedidos con confirmación y responde dudas (precios, pago, horario, dirección).
             </T>
           </View>
-          <Switch value={activo} onValueChange={cambiarActivo} disabled={!disponible && !activo}
+          <Switch value={activo} onValueChange={cambiarActivo}
             trackColor={{ true: COLORES.verde, false: '#c9bfc3' }} thumbColor="#ffffff" accessibilityLabel="Activar el asistente" />
         </View>
 
         {!disponible ? (
           <T variante="semi" estilo={{ fontSize: 12, color: COLORES.textoSuave }}>
-            La IA no está configurada en el servidor, así que el asistente no puede funcionar.
+            La IA no está configurada en el servidor: responderá el bot guiado (catálogo, pedidos escribiendo el
+            producto y la cantidad, y confirmación), pero no podrá responder otras dudas.
           </T>
         ) : ia?.soloDemo ? (
           <T variante="semi" estilo={{ fontSize: 12, color: COLORES.ambar }}>
-            Modo demostración: solo responde a los clientes de ejemplo. A tus clientes reales no les responde.
+            Modo demostración: la IA solo atiende a los clientes de ejemplo. A tus clientes reales los atiende el bot
+            guiado, sin IA (catálogo, pedidos escribiendo el producto y la cantidad, y confirmación).
           </T>
         ) : null}
         <T variante="suave" estilo={{ fontSize: 12 }}>

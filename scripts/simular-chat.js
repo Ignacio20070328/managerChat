@@ -24,6 +24,7 @@ const mensajes = require('../bot/mensajes');
 const pedidos = require('../servicios/pedidos');
 const analisis = require('../servicios/analisis');
 const { registrarComprobante, prepararCarpeta, ComprobanteInvalidoError } = require('../bot/comprobantes');
+const { respuestaComprobanteSinPedido } = require('../bot/conversacion');
 const { generarImagenes } = require('./comprobante-ejemplo');
 
 const MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
@@ -38,8 +39,7 @@ async function imagenDelComprobante(argumento, config) {
         return { mimetype: mime, data: (await fs.readFile(argumento)).toString('base64') };
     }
     const ultimo = await pedidos.ultimoDelCliente(db, telefono);
-    const monto = argumento ? Number(argumento) : (ultimo?.estado === 'PorPagar' ? ultimo.total : null);
-    if (!monto) throw new Error('no tienes un pedido por pagar: haz un pedido primero o escribe /foto <monto>');
+    const monto = argumento ? Number(argumento) : (['PorPagar', 'Rechazado'].includes(ultimo?.estado) ? ultimo.total : 1000);
     // La cuenta y el titular salen de los datos de transferencia del negocio (Ajustes)
     const cuenta = (config.datos_transferencia || '').match(/\d[\d-]{5,}\d/)?.[0] ?? '12345678';
     const fecha = new Date().toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -60,9 +60,10 @@ async function enviarFoto(argumento, ia) {
         registrado = await registrarComprobante(db, telefono, media);
     } catch (error) {
         if (error instanceof ComprobanteInvalidoError) return console.log(`Bot: ${mensajes.formatoInvalido}\n`);
+        if (error instanceof pedidos.SinPedidoError) return console.log(`Bot: ${(await respuestaComprobanteSinPedido(db)).replace(/\n/g, '\n     ')}\n`);
         throw error;
     }
-    console.log(`Bot: ${mensajes.comprobanteRecibido(registrado.idPedido, registrado.total)}`);
+    console.log(`Bot: ${mensajes.comprobanteRecibido(registrado.idPedido, registrado.total, registrado.reenvio)}`);
     console.log(`     → En la app: Comprobantes → pedido #${registrado.idPedido}`);
     if (!ia.activa) return console.log('     (la IA no está configurada: el comprobante queda sin revisión previa)\n');
     console.log('     (la IA está revisando el comprobante…)');
