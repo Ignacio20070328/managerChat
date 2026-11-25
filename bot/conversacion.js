@@ -16,7 +16,9 @@ const quitarTildes = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 const COMANDOS = {
     menu: ['menu', 'catalogo', 'productos', 'precios', 'pedir', 'comprar'],
     estado: ['estado', 'mi pedido', 'estado pedido', 'estado de mi pedido'],
-    ayuda: ['ayuda', 'info', 'informacion']
+    ayuda: ['ayuda', 'info', 'informacion'],
+    // Escribió "comprobante" pero sin la foto
+    comprobante: ['comprobante', 'el comprobante', 'envio comprobante', 'envio el comprobante', 'aqui va el comprobante']
 };
 
 // "1x2", "1 x 2", "1*2", "1×2" separados por coma, punto y coma, "y" o saltos de línea
@@ -30,7 +32,7 @@ const SOLO_ITEMS = /^\s*\d{1,3}\s*[x×*]\s*\d{1,3}(\s*(,|;|\by\b|\n)?\s*\d{1,3}\
 const sinFormato = (texto) => (texto || '').replace(/[_~]/g, '').replace(/(?<!\d\s*)\*|\*(?!\s*\d)/g, '');
 
 function normalizar(texto) {
-    return quitarTildes((texto || '').toLowerCase()).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
+    return quitarTildes(sinFormato(texto).toLowerCase()).replace(/[¿?¡!.,]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 function detectarComando(texto) {
@@ -67,6 +69,9 @@ async function procesarTexto(db, telefono, texto, { asistente = asistenteServici
     }
     if (comando === 'ayuda') {
         return mensajes.ayuda;
+    }
+    if (comando === 'comprobante') {
+        return mensajes.faltaFotoComprobante;
     }
 
     // ¿Responde "sí" o "no" a un pedido que le propuso el asistente?

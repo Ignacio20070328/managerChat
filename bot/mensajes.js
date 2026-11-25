@@ -30,6 +30,9 @@ module.exports = {
 
     pedidoInvalido: (detalle) => `⚠️ ${detalle}.\n\n${COMO_PEDIR}\nEscribe *menu* para ver los productos.`,
 
+    faltaFotoComprobante:
+        '📸 Para registrar tu pago, envía la *foto* del comprobante y escribe la palabra *comprobante* en el mismo mensaje (como texto de la foto).',
+
     pedirPalabraComprobante:
         '📸 Para registrar tu pago, por favor envía la foto escribiendo la palabra "comprobante" en el mismo mensaje.',
 

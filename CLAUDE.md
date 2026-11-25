@@ -107,7 +107,8 @@ npm start                       # API + bot (pide escanear el QR). npm run dev: 
 npm run api                     # solo la API, SIN WhatsApp (para trabajar en la app)
 npm run demo:cargar             # datos de ejemplo (pedidos en todas las etapas, comprobantes, análisis IA simulado)
 npm run demo:borrar             # borra SOLO los de ejemplo (teléfonos 5690000…, productos "(ejemplo)")
-npm run chat                    # chat simulado como cliente de ejemplo (comandos, pedidos y asistente IA, sin WhatsApp)
+npm run chat                    # chat simulado como cliente de ejemplo (comandos, pedidos, asistente IA y /foto
+                                #   para enviar un comprobante de ejemplo que revisa la IA), sin WhatsApp
 npm test                        # pruebas (sin base de datos ni internet)
 
 cd gestor-movil && npm install  # app: dependencias SOLO aquí, nunca en la raíz
