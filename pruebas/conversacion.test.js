@@ -1,7 +1,7 @@
 // Pruebas de los pedidos con código ("1x2") del bot. Sin base de datos.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parsearItems } = require('../bot/conversacion');
+const { detectarComando, parsearItems } = require('../bot/conversacion');
 
 test('pedidos con código: formatos aceptados, incluido lo copiado del menú con negrita', () => {
     for (const [texto, esperado] of [
@@ -16,4 +16,9 @@ test('pedidos con código: lo que no es un pedido no se interpreta como tal', ()
     for (const texto of ['1', 'hola', 'quiero 2 de frambuesa', '1x', 'x2', '', '*hola*']) {
         assert.equal(parsearItems(texto), null, texto);
     }
+});
+
+test('"comprobante" escrito sin foto se reconoce (también con negrita o punto)', () => {
+    for (const texto of ['comprobante', '*comprobante*.', 'Comprobante', 'envío el comprobante']) assert.equal(detectarComando(texto), 'comprobante', texto);
+    assert.equal(detectarComando('ya pagué, cuándo revisan el comprobante?'), null);
 });
