@@ -6,12 +6,13 @@ const pedidos = require('../servicios/pedidos');
 const configuracion = require('../servicios/configuracion');
 const { ErrorApi } = require('../lib/errores');
 const mensajes = require('./mensajes');
+const asistenteServicio = require('../servicios/asistente');
 
 const quitarTildes = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 // Palabras que activan cada comando (el mensaje completo, sin tildes ni mayúsculas).
-// El bot NO responde a saludos u otras conversaciones: el número puede ser
-// personal y no debe contestar mensajes que no son para él.
+// Lo que no es un comando solo lo responde el asistente de IA, y solo si el dueño lo activó
+// en Ajustes (requiere un número dedicado: con un número personal contestaría a todos).
 const COMANDOS = {
     menu: ['menu', 'catalogo', 'productos', 'precios', 'pedir', 'comprar'],
     estado: ['estado', 'mi pedido', 'estado pedido', 'estado de mi pedido'],
@@ -40,7 +41,11 @@ function parsearItems(texto) {
     return [...texto.matchAll(ITEM)].map((m) => ({ numero: Number(m[1]), cantidad: Number(m[2]) }));
 }
 
-async function procesarTexto(db, telefono, texto) {
+/**
+ * @param asistente  servicio del asistente de IA (inyectable en pruebas). Responde lo que no es un comando,
+ *                   solo si el dueño lo activó en Ajustes; si no, el bot sigue sin responder conversaciones.
+ */
+async function procesarTexto(db, telefono, texto, { asistente = asistenteServicio } = {}) {
     const comando = detectarComando(texto);
 
     if (comando === 'menu') {
@@ -58,7 +63,7 @@ async function procesarTexto(db, telefono, texto) {
     }
 
     const solicitados = parsearItems(texto);
-    if (!solicitados) return null;
+    if (!solicitados) return asistente.responder(db, telefono, texto);
 
     // Los números corresponden al orden del catálogo que muestra "menu"
     const catalogo = await productos.listar(db, { soloActivos: true });

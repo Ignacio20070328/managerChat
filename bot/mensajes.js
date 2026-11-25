@@ -65,6 +65,11 @@ module.exports = {
         return `📦 Tu pedido #${pedido.id_pedido}${total} ${textos[pedido.estado]}`;
     },
 
+    // Asistente de IA (servicios/asistente.js)
+    asistenteNoDisponible: 'En este momento no puedo responder tu consulta 🙏. Puedes escribir *menu* para ver los productos ' +
+        'o *estado* para ver tu pedido, o espera y el dueño te responderá por aquí.',
+    asistenteDatoNoVerificado: 'Para no darte un dato equivocado, revisa los precios con *menu* o espera: el dueño te responderá por aquí.',
+
     ayuda: '👋 Hola. Puedes escribir:\n• *menu* — ver productos y precios\n• *estado* — ver cómo va tu pedido\n' +
         '• Enviar la foto de tu pago con la palabra *comprobante*'
 };
